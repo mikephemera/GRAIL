@@ -1,16 +1,13 @@
 """Kling AI video generation adapter.
 
-Wraps the Kling image-to-video API with JWT authentication, task polling,
+Wraps the Kling image-to-video API with API Key authentication, task polling,
 and automatic video download + resize.
 
 Environment variables required:
-    KLING_ACCESS_KEY: Your Kling API access key
-    KLING_SECRET_KEY: Your Kling API secret key
+    KLING_API_KEY: Your Kling API key (from https://kling.ai/dev/api-key)
 """
 
 import base64
-import hashlib
-import hmac
 import json
 import os
 import time
@@ -19,26 +16,6 @@ import requests
 from PIL import Image
 
 from grail.core.video import download_video, resize_video
-
-
-def _generate_jwt_token(access_key, secret_key):
-    """Generate a JWT token for Kling API authentication."""
-
-    def _base64url_encode(data):
-        return base64.urlsafe_b64encode(data).rstrip(b"=").decode("utf-8")
-
-    header = json.dumps({"alg": "HS256", "typ": "JWT"}, separators=(",", ":")).encode()
-    now = int(time.time())
-    payload = json.dumps(
-        {"iss": access_key, "exp": now + 1800, "nbf": now - 5}, separators=(",", ":")
-    ).encode()
-
-    h = _base64url_encode(header)
-    p = _base64url_encode(payload)
-    sig = _base64url_encode(
-        hmac.new(secret_key.encode(), f"{h}.{p}".encode(), hashlib.sha256).digest()
-    )
-    return f"{h}.{p}.{sig}"
 
 
 def generate_video(
@@ -73,11 +50,12 @@ def generate_video(
     Returns:
         Path to the downloaded video, or None on failure.
     """
-    access_key = os.getenv("KLING_ACCESS_KEY")
-    secret_key = os.getenv("KLING_SECRET_KEY")
-    if not access_key or not secret_key:
+    api_key = os.getenv("KLING_API_KEY")
+    if not api_key:
         raise ValueError(
-            "KLING_ACCESS_KEY and KLING_SECRET_KEY must be set in environment variables."
+            "KLING_API_KEY must be set in environment variables.\n"
+            "  export KLING_API_KEY=<your-api-key>\n"
+            "Verify with: printenv KLING_API_KEY  (not 'echo' — shell variables need 'export')"
         )
 
     # Read image dimensions and determine aspect ratio
@@ -97,10 +75,9 @@ def generate_video(
         with open(image_tail_path, "rb") as f:
             tail_b64 = base64.b64encode(f.read()).decode()
 
-    token = _generate_jwt_token(access_key, secret_key)
-    base_url = "https://api.klingai.com"
+    base_url = "https://api-singapore.klingai.com"
     create_url = f"{base_url}/v1/videos/image2video"
-    headers = {"Content-Type": "application/json", "Authorization": f"Bearer {token}"}
+    headers = {"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"}
 
     payload = {
         "model_name": model_name,
@@ -131,10 +108,6 @@ def generate_video(
         max_attempts, interval = 120, 5
 
         for attempt in range(max_attempts):
-            if attempt > 0 and attempt % 60 == 0:
-                token = _generate_jwt_token(access_key, secret_key)
-                headers["Authorization"] = f"Bearer {token}"
-
             time.sleep(interval)
             status_resp = requests.get(query_url, headers=headers)
             status_data = status_resp.json()

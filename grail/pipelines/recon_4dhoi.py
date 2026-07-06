@@ -11,6 +11,7 @@ Steps:
 """
 
 import argparse
+import gc
 import os
 import pickle
 import shutil
@@ -578,6 +579,11 @@ def main():
         for step_num, skip_attr, step_fn in _STEPS:
             if not getattr(args, skip_attr):
                 step_fn(video_ids, args)
+                # Free GPU memory between steps to avoid OOM (e.g., GEM-SMPL
+                # holds ~7.6 GiB that SAM2 needs for frame loading in step 2).
+                gc.collect()
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
     except KeyboardInterrupt:
         print("\nInterrupted")
         success = False

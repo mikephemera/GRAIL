@@ -259,3 +259,5 @@ out/
 models/
 wandb/
 logs_rl/
+CLAUDE.md
+CLAUDE_*.mdly/

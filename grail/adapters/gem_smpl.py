@@ -7,6 +7,7 @@ grail branch (GENMO architecture with SMPL-X body model).
 Reuses `demo_slam.py` from GEM-SMPL for preprocessing and data loading.
 """
 
+import gc
 import os
 import sys
 import time
@@ -152,6 +153,12 @@ def infer_human_pose(video_path, cache_dir, is_static_cam=False, verbose=False):
             pred = detach_to_cpu(pred)
             torch.save(pred, paths.hmr4d_results)
             Log.info(f"[GEM-SMPL] Saved HMR4D results to {paths.hmr4d_results}")
+
+            # Free GPU memory: the HMR4D model (~7.6 GiB on 10 GiB cards) must
+            # be released before downstream steps (SAM2, FoundationPose) run.
+            del model
+            gc.collect()
+            torch.cuda.empty_cache()
         else:
             Log.info(f"[GEM-SMPL] Loading cached HMR4D results from {paths.hmr4d_results}")
             pred = torch.load(paths.hmr4d_results, map_location="cpu")

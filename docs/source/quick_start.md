@@ -13,7 +13,7 @@ scripts for pipeline stages.
 ## 1. Source environment keys
 
 ```bash
-source .env   # OPENAI_API_KEY, KLING_ACCESS_KEY, KLING_SECRET_KEY, HF_TOKEN
+source .env   # OPENAI_API_KEY, KLING_API_KEY, HF_TOKEN
 ```
 
 `OPENAI_API_KEY` is used by the OpenAI API for prompt refinement and

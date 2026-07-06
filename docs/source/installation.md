@@ -19,9 +19,9 @@ git submodule update --init --recursive
 
 docker pull docker.io/nvgrail/grail:latest
 docker run --gpus all -it --shm-size=16g \
+    --name grail \
     -v "$PWD":/workspace/grail \
     docker.io/nvgrail/grail:latest
-
 # Inside the container
 cd /workspace/grail
 bash scripts/setup/install_env_docker.sh   # validates native extensions, downloads Blender (~6.4GB)
@@ -274,9 +274,8 @@ export OMNI_KIT_ACCEPT_EULA=Yes               # Isaac Sim EULA
 export DISPLAY=:1                             # GMR mujoco viewer
 
 # For 2D generation pipeline
-export OPENAI_API_KEY=<your-key>
-export KLING_ACCESS_KEY=<your-key>
-export KLING_SECRET_KEY=<your-key>
+export OPENAI_API_KEY=<your-openai-api-key>
+export KLING_API_KEY=<your-api-key>
 
 # Optional cache paths
 export HF_HOME=/path/to/cache/huggingface

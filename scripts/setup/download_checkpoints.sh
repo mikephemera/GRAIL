@@ -158,6 +158,16 @@ if [ "$SKIP_GEM_SMPL" = false ]; then
         hf_grail_download "GEM-SMPL/inputs/checkpoints/yolo/yolov8x.pt"
         # Outputs: GRAIL's own GENMO (HMR4D) checkpoint
         hf_grail_download "GEM-SMPL/outputs/mocap_mixed_v1/genmo/genmo_lg_jukebox_jukebox_new/version_0/checkpoints/last.ckpt"
+
+        # VIMO module references smpl_mean_params.npz from two paths —
+        # copy the bundled one to the hardcoded vimo/ location.
+        VIMO_DIR="imports/GEM-SMPL/inputs/checkpoints/vimo"
+        SRC_MEAN="imports/GEM-SMPL/hmr4d/network/hmr2/configs/smpl_mean_params.npz"
+        if [ -f "$SRC_MEAN" ]; then
+            mkdir -p "$VIMO_DIR"
+            cp "$SRC_MEAN" "$VIMO_DIR/smpl_mean_params.npz"
+            ok "VIMO smpl_mean_params.npz -> $VIMO_DIR/"
+        fi
     fi
 else
     section "GEM-SMPL checkpoints (skipped)"
@@ -231,6 +241,37 @@ if [ "$SKIP_FOUNDATIONPOSE" = false ]; then
         # Timestamp dir names are load-path sensitive — FoundationPose's loader hardcodes them.
         hf_grail_download "FoundationPose/weights/2024-01-11-20-02-45/model_best.pth"
         hf_grail_download "FoundationPose/weights/2023-10-28-18-33-37/model_best.pth"
+
+        # The HF repo only carries model_best.pth — write minimal config.yml files
+        # so OmegaConf.load() in ScorePredictor / PoseRefinePredictor doesn't crash.
+        # All non-essential keys have backward-compatible defaults in the loaders.
+        cat > imports/FoundationPose/weights/2024-01-11-20-02-45/config.yml << 'YAMLEOF'
+# Minimal config for ScorePredictor — see predict_score.py for defaults.
+# Must match the checkpoint: BN enabled, 6 input channels (RGB + XYZ).
+input_resize: [160, 160]
+use_normal: false
+use_BN: true
+normalize_xyz: false
+crop_ratio: 1.2
+c_in: 6
+zfar: .inf
+YAMLEOF
+        cat > imports/FoundationPose/weights/2023-10-28-18-33-37/config.yml << 'YAMLEOF'
+# Minimal config for PoseRefinePredictor — see predict_pose_refine.py for defaults.
+# Must match the checkpoint: BN enabled, 6 input channels (RGB + XYZ).
+input_resize: [160, 160]
+use_normal: false
+use_mask: false
+use_BN: true
+crop_ratio: 1.2
+n_view: 1
+trans_rep: tracknet
+rot_rep: axis_angle
+zfar: .inf
+c_in: 6
+normalize_xyz: true
+YAMLEOF
+        ok "Wrote minimal config.yml files alongside checkpoint weights"
     fi
 else
     section "FoundationPose weights (skipped)"

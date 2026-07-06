@@ -6,7 +6,7 @@
 	url = https://github.com/Tencent-Hunyuan/Hunyuan3D-2.1.git
 [submodule "imports/FoundationPose"]
 	path = imports/FoundationPose
-	url = https://github.com/NVlabs/FoundationPose
+	url = git@github.com:mikephemera/FoundationPose.git
 [submodule "imports/GEM-SMPL"]
 	path = imports/GEM-SMPL
 	url = https://github.com/NVlabs/GENMO

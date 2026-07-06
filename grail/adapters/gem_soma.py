@@ -9,6 +9,7 @@ Since GEM-SMPL is installed as the default `gem` package, this adapter
 imports GEM-SOMA via sys.path manipulation to avoid conflicts.
 """
 
+import gc
 import os
 import sys
 import time
@@ -118,6 +119,11 @@ def infer_human_pose(
         pred = model.predict(data, static_cam=cfg.static_cam)
         pred = detach_to_cpu(pred)
         print(f"[GEM-SOMA] Inference done ({time.time() - t0:.1f}s)")
+
+        # Free GPU memory before downstream steps
+        del model
+        gc.collect()
+        torch.cuda.empty_cache()
 
         # Remap to expected output format (CPU tensors)
         def _to_cpu(d):

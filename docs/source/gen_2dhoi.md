@@ -63,8 +63,8 @@ Outputs:
   - Why
 * - `OPENAI_API_KEY`
   - Prompt refinement (step 4) and scale evaluation (step 2) through the OpenAI API. Defaults use `gpt-4o`.
-* - `KLING_ACCESS_KEY` + `KLING_SECRET_KEY`
-  - Kling AI HTTP API.
+* - `KLING_API_KEY`
+  - Kling AI HTTP API (Bearer token from https://kling.ai/dev/api-key).
 ```
 
 ## Common variants
