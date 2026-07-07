@@ -169,17 +169,17 @@ data/
 data
 
 # Results
-*.mp4
-*.jpg
-*.jpeg
-*.pickle
-*.pkl
-*.npz
-*.npy
-*.obj
-*.pt
-*.pth
-*.ckpt
+# *.mp4
+# *.jpg
+# *.jpeg
+# *.pickle
+# *.pkl
+# *.npz
+# *.npy
+# *.obj
+# *.pt
+# *.pth
+# *.ckpt
 
 # Documentation media (overrides the *.mp4 / *.jpg / *.jpeg blanket rules above
 # so README/docs assets are tracked even though we ignore them everywhere else).
@@ -212,11 +212,11 @@ inputs
 inputs/
 logs
 logs/
-results
-results/
-results*/
-results_backup/
-results_mybackup/
+!results
+# results/
+# results*/
+# results_backup/
+# results_mybackup/
 output
 output/
 tracklog/
