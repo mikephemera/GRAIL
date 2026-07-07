@@ -1,0 +1,8 @@
+# https://github.com/mikedh/trimesh
+
+newmtl 10108_Cordless_Drill_v2
+Ka 0.21960784 0.21960784 0.21960784
+Kd 0.40000000 0.40000000 0.40000000
+Ks 0.50196078 0.50196078 0.50196078
+Ns 721.04290800
+map_Kd 10108_Cordless_Drill_v2.jpeg

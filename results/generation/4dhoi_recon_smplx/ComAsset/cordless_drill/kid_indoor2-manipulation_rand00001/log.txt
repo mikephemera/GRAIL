@@ -1,0 +1,10 @@
+[2026-07-07 03:02:31,671] Valid: initial human position error is within threshold: 0.054660551249980927 < 0.5m
+[2026-07-07 03:04:23,776] Valid: total object mask difference is within threshold: 0.06645750999450684 < 0.3
+[2026-07-07 03:04:23,777] Valid: object mask aligned at all frames!
+[2026-07-07 03:04:23,777] Valid: keypoint_tracking is within threshold: 0.6602910161018372 < 2.0
+[2026-07-07 03:04:23,777] Valid: contact is within threshold: 1.052724003791809 < 5.0
+[2026-07-07 03:04:23,793] Valid: no penetration at initial frame. Min distance: 0.3869 >= threshold: 0.02
+[2026-07-07 03:04:23,793] Valid: human has sufficient motion. Avg max velocity: 0.0123 >= threshold: 0.01
+[2026-07-07 03:04:23,793] No static objects (table) data available, skipping on-table check
+[2026-07-07 03:04:23,794] Object motion: dynamic (range=0.3033m, thr=0.02)
+[2026-07-07 03:04:23,794] Valid HOI result!
