@@ -30,24 +30,13 @@ from grail.core.config import load_recon_config
 from grail.core.dataset import category2object
 from grail.core.io import load_hoi_data, save_hoi_data, save_human_motion_data, vis_keypoints_data
 from grail.core.logging import create_logger
-from grail.core.torch_utils import tensor_to, tensor_to_numpy
+from grail.core.torch_utils import tensor_to_numpy
 from grail.core.video import concat_videos, extract_frames_from_video
-from grail.optimization.hoi_optimizer import HOIOptimizer
-from grail.pose_est.human_pose import run_human_pose_est
 from grail.pose_est.object_pose import run_obj_pose_est
-from grail.postprocessing.filter import filter_hoi_result
-from grail.postprocessing.postprocess import post_process_hoi_result
-from grail.preprocessing.preprocess import (
-    depth_to_point_cloud,
-    load_camera_intrinsics,
-    load_masks_from_cache,
-    preprocess_depth,
-    preprocess_masks,
-    save_point_cloud_ply,
-    visualize_depth_as_point_cloud,
-)
-from grail.visualization.scenepic import ScenepicVisualizer
-from grail.visualization.utils.vis_utils import prep_visualizer_input
+
+
+GRAIL_ROOT = Path(__file__).resolve().parents[2]
+WORKSPACE_ROOT = GRAIL_ROOT.parent
 
 
 def _strip_mp4(video_id):
@@ -59,6 +48,62 @@ def _origin_id(video_id):
     return video_id[: video_id.find("-end")] if "end" in video_id else video_id
 
 
+def _musa_available():
+    try:
+        import torch_musa  # noqa: F401
+    except Exception:
+        return False
+    try:
+        return bool(torch.musa.is_available())
+    except Exception:
+        return False
+
+
+def _resolve_device(device):
+    """Resolve the pipeline device with a MUSA-first auto policy."""
+    requested = str(device or "auto")
+    lower = requested.lower()
+
+    if lower == "auto":
+        if _musa_available():
+            return "musa:0"
+        if torch.cuda.is_available():
+            return "cuda:0"
+        return "cpu"
+
+    if lower == "musa":
+        return "musa:0"
+
+    if lower == "cuda" and not torch.cuda.is_available() and _musa_available():
+        return "musa:0"
+
+    if lower.startswith("cuda:") and not torch.cuda.is_available() and _musa_available():
+        return "musa:" + requested.split(":", 1)[1]
+
+    return requested
+
+
+def _empty_cache_for_device(device):
+    lower = str(device).lower()
+    if lower.startswith("musa"):
+        try:
+            import torch_musa  # noqa: F401
+
+            torch.musa.empty_cache()
+        except Exception:
+            pass
+    elif lower.startswith("cuda") and torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
+
+def _load_masks_from_cache(cache_file):
+    if not os.path.exists(cache_file):
+        raise FileNotFoundError(f"Masks cache not found: {cache_file}")
+    masks = np.load(cache_file, allow_pickle=True)["masks"].item()
+    print(f"Loaded masks from cache: {cache_file}")
+    return masks
+
+
 # ---------------------------------------------------------------------------
 # Pipeline steps
 # ---------------------------------------------------------------------------
@@ -66,6 +111,8 @@ def _origin_id(video_id):
 
 def step1_predict_human_motion(video_ids, args):
     """Step 1: HMR4D human motion prediction."""
+    from grail.pose_est.human_pose import run_human_pose_est
+
     output_dir = f"{args.results_dir}/{args.hmr_dir}"
     os.makedirs(output_dir, exist_ok=True)
     os.makedirs(f"{args.results_dir}/{args.hmr_cache_dir}", exist_ok=True)
@@ -108,6 +155,16 @@ def step1_predict_human_motion(video_ids, args):
 
 def step2_preprocess_data(video_ids, args):
     """Step 2: SAM2 mask tracking + depth estimation."""
+    from grail.preprocessing.preprocess import (
+        depth_to_point_cloud,
+        load_camera_intrinsics,
+        load_masks_from_cache,
+        preprocess_depth,
+        preprocess_masks,
+        save_point_cloud_ply,
+        visualize_depth_as_point_cloud,
+    )
+
     os.makedirs(f"{args.results_dir}/{args.recon_cache_dir}", exist_ok=True)
 
     for video_id in tqdm(sorted(video_ids), desc="Step 2 — Preprocess"):
@@ -251,7 +308,7 @@ def step3_obj_pose_estimation(video_ids, args):
             if not os.path.exists(masks_cache):
                 raise FileNotFoundError(f"Masks cache missing: {masks_cache}. Run step2 first.")
 
-            video_masks = load_masks_from_cache(masks_cache)
+            video_masks = _load_masks_from_cache(masks_cache)
 
             fp_input = f"{args.results_dir}/{args.foundation_pose_dir}/{video_id_origin}"
             shutil.rmtree(out_dir, ignore_errors=True)
@@ -263,9 +320,17 @@ def step3_obj_pose_estimation(video_ids, args):
                 input_dir=out_dir,
                 video_masks=video_masks,
                 debug=args.foundation_pose_debug,
+                device=args.device,
                 crop_image=args.crop_image,
                 interpolation_factor=args.interpolation_factor,
                 is_static=args.is_static_obj,
+                foundationpose_root=args.foundationpose_root,
+                nvdiffrast_root=args.nvdiffrast_root,
+                pytorch3d_root=args.pytorch3d_root,
+                track_refine_iter=args.track_refine_iter,
+                smooth_window=args.smooth_window,
+                smooth_polyorder=args.smooth_polyorder,
+                require_mycpp=args.require_mycpp,
             )
 
             if not success:
@@ -277,6 +342,8 @@ def step3_obj_pose_estimation(video_ids, args):
 
 def step4_optimize_4dhoi(video_ids, args):
     """Step 4: 4D HOI optimization."""
+    from grail.optimization.hoi_optimizer import HOIOptimizer
+
     for video_id in tqdm(sorted(video_ids), desc="Step 4 — Optimize"):
         try:
             video_id = _strip_mp4(video_id)
@@ -323,6 +390,11 @@ def step4_optimize_4dhoi(video_ids, args):
 
 def step5_filter_hoi_result(video_ids, args):
     """Step 5: Filter, post-process, and package valid results."""
+    from grail.postprocessing.filter import filter_hoi_result
+    from grail.postprocessing.postprocess import post_process_hoi_result
+    from grail.visualization.scenepic import ScenepicVisualizer
+    from grail.visualization.utils.vis_utils import prep_visualizer_input
+
     sp_vis = ScenepicVisualizer()
     os.makedirs(f"{args.results_dir}/{args.output_dir}_valid", exist_ok=True)
 
@@ -462,6 +534,9 @@ def step5_filter_hoi_result(video_ids, args):
 
 def step6_visualize_hoi_result(video_ids, args):
     """Step 6: ScenePic HTML visualization."""
+    from grail.visualization.scenepic import ScenepicVisualizer
+    from grail.visualization.utils.vis_utils import prep_visualizer_input
+
     os.makedirs(f"{args.results_dir}/{args.vis_scenepic_dir}", exist_ok=True)
     sp_vis = ScenepicVisualizer()
 
@@ -519,12 +594,44 @@ def main():
     parser.add_argument("--category", type=str, default=None)
     parser.add_argument("--character", type=str, default=None)
     parser.add_argument("--video_id", type=str, default=None)
-    parser.add_argument("--device", type=str, default="cuda")
+    parser.add_argument("--device", type=str, default="auto")
     parser.add_argument("--num_job_chunks", type=int, default=1)
     parser.add_argument("--job_chunk_idx", type=int, default=0)
     parser.add_argument("--results_dir", type=str, default=None)
     parser.add_argument("--video_dir", type=str, default=None)
     parser.add_argument("--output_dir", type=str, default=None)
+    parser.add_argument(
+        "--foundation_pose_output_dir",
+        "--foundation-pose-output-dir",
+        dest="foundation_pose_output_dir",
+        type=str,
+        default=None,
+    )
+    parser.add_argument(
+        "--foundationpose_root",
+        "--foundationpose-root",
+        dest="foundationpose_root",
+        type=str,
+        default=str(WORKSPACE_ROOT / "FoundationPose_musa"),
+    )
+    parser.add_argument(
+        "--nvdiffrast_root",
+        "--nvdiffrast-root",
+        dest="nvdiffrast_root",
+        type=str,
+        default=str(WORKSPACE_ROOT / "nvdiffrast_musa"),
+    )
+    parser.add_argument(
+        "--pytorch3d_root",
+        "--pytorch3d-root",
+        dest="pytorch3d_root",
+        type=str,
+        default=str(WORKSPACE_ROOT / "pytorch3d_musa"),
+    )
+    parser.add_argument("--track_refine_iter", "--track-refine-iter", type=int, default=2)
+    parser.add_argument("--smooth_window", "--smooth-window", type=int, default=9)
+    parser.add_argument("--smooth_polyorder", "--smooth-polyorder", type=int, default=3)
+    parser.add_argument("--require_mycpp", "--require-mycpp", action="store_true", default=False)
     parser.add_argument("--skip_step1", action="store_true")
     parser.add_argument("--skip_step2", action="store_true")
     parser.add_argument("--skip_step3", action="store_true")
@@ -543,9 +650,7 @@ def main():
     cfg = parse_recon_config(cfg)
     args.cfg = cfg
 
-    if args.device == "cuda" and not torch.cuda.is_available():
-        print("CUDA not available, falling back to CPU")
-        args.device = "cpu"
+    args.device = _resolve_device(args.device)
 
     # Discover videos
     if args.video_id is not None:
@@ -569,7 +674,7 @@ def main():
 
     print(
         f"Config: {pre_args.config} | Worker {args.job_chunk_idx}/{args.num_job_chunks} | "
-        f"{len(video_ids)} videos"
+        f"{len(video_ids)} videos | device={args.device}"
     )
 
     t0 = time.time()
@@ -582,8 +687,7 @@ def main():
                 # Free GPU memory between steps to avoid OOM (e.g., GEM-SMPL
                 # holds ~7.6 GiB that SAM2 needs for frame loading in step 2).
                 gc.collect()
-                if torch.cuda.is_available():
-                    torch.cuda.empty_cache()
+                _empty_cache_for_device(args.device)
     except KeyboardInterrupt:
         print("\nInterrupted")
         success = False

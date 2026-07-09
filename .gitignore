@@ -261,3 +261,4 @@ wandb/
 logs_rl/
 CLAUDE.md
 CLAUDE_*.mdly/
+results/generation/foundation_pose_output_musa/

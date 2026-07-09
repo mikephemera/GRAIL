@@ -1,6 +1,7 @@
 import os
 import pickle
 import subprocess
+import sys
 import time
 from glob import glob
 
@@ -14,6 +15,15 @@ try:
     from .torch_utils import tensor_to
 except ImportError:
     pass
+
+
+def _install_numpy_pickle_aliases():
+    core = getattr(np, "_core", np.core)
+    sys.modules.setdefault("numpy._core", core)
+    sys.modules.setdefault("numpy._core.multiarray", np.core.multiarray)
+    sys.modules.setdefault("numpy._core.numeric", np.core.numeric)
+    if hasattr(np.core, "_multiarray_umath"):
+        sys.modules.setdefault("numpy._core._multiarray_umath", np.core._multiarray_umath)
 
 
 def vis_keypoints_data(video_path, vitpose, hand_keypoints_2d, cache_dir):
@@ -494,6 +504,7 @@ def load_init_sim_state_data():
 def load_init_rendering_data(
     load_path, to_tensor=False, with_human_data=False, with_scene_data=False, device="cuda"
 ):
+    _install_numpy_pickle_aliases()
     with open(load_path, "rb") as handle:
         init_rendering_data = pickle.load(handle)
 

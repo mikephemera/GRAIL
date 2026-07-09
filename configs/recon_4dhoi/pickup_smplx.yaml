@@ -35,6 +35,13 @@ obj_pose_tracking:
   foundation_pose_debug: 2
   crop_image: true
   interpolation_factor: 2
+  foundationpose_root: "/workspace/FoundationPose_musa"
+  nvdiffrast_root: "/workspace/nvdiffrast_musa"
+  pytorch3d_root: "/workspace/pytorch3d_musa"
+  track_refine_iter: 2
+  smooth_window: 9
+  smooth_polyorder: 3
+  require_mycpp: false
 
 # ── Optimization config (passed to HOIOptimizer) ─────────────────────────────
 optimization:

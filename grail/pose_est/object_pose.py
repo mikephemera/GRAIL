@@ -191,10 +191,17 @@ def run_obj_pose_est(
     input_dir,
     video_masks,
     debug=2,
-    device="cuda",
+    device="auto",
     crop_image=False,
     interpolation_factor=1,
     is_static=False,
+    foundationpose_root=None,
+    nvdiffrast_root=None,
+    pytorch3d_root=None,
+    track_refine_iter=2,
+    smooth_window=9,
+    smooth_polyorder=3,
+    require_mycpp=False,
 ):
     """Run object pose estimation with optional cropping and frame interpolation.
 
@@ -208,6 +215,13 @@ def run_obj_pose_est(
         crop_image: Crop to minimal bbox covering all object positions.
         interpolation_factor: Frame interpolation factor (1 = none).
         is_static: If False, detect if the object is static; if True, skip FoundationPose and generate static poses directly.
+        foundationpose_root: FoundationPose source root.
+        nvdiffrast_root: nvdiffrast_musa source/install root.
+        pytorch3d_root: pytorch3d_musa source/install root.
+        track_refine_iter: FoundationPose tracking refinement iterations.
+        smooth_window: Temporal smoothing window.
+        smooth_polyorder: Temporal smoothing polynomial order.
+        require_mycpp: Fail if FoundationPose mycpp.cluster_poses is unavailable.
     """
     _, original_frame_count = get_video_fps_and_frame_count(video_path)
 
@@ -311,7 +325,23 @@ def run_obj_pose_est(
         input_dir,
         "--debug",
         str(debug),
+        "--device",
+        str(device),
+        "--track_refine_iter",
+        str(track_refine_iter),
+        "--smooth_window",
+        str(smooth_window),
+        "--smooth_polyorder",
+        str(smooth_polyorder),
     ]
+    if foundationpose_root:
+        cmd.extend(["--foundationpose_root", str(foundationpose_root)])
+    if nvdiffrast_root:
+        cmd.extend(["--nvdiffrast_root", str(nvdiffrast_root)])
+    if pytorch3d_root:
+        cmd.extend(["--pytorch3d_root", str(pytorch3d_root)])
+    if require_mycpp:
+        cmd.append("--require_mycpp")
     if is_static:
         cmd.append("--is_static")
 
@@ -336,6 +366,14 @@ if __name__ == "__main__":
     parser.add_argument("--test_scene_dir", type=str, required=True)
     parser.add_argument("--video", type=str, required=True)
     parser.add_argument("--debug", type=int, default=2)
+    parser.add_argument("--device", type=str, default="auto")
+    parser.add_argument("--foundationpose_root", type=str, default=None)
+    parser.add_argument("--nvdiffrast_root", type=str, default=None)
+    parser.add_argument("--pytorch3d_root", type=str, default=None)
+    parser.add_argument("--track_refine_iter", type=int, default=2)
+    parser.add_argument("--smooth_window", type=int, default=9)
+    parser.add_argument("--smooth_polyorder", type=int, default=3)
+    parser.add_argument("--require_mycpp", action="store_true", default=False)
     args = parser.parse_args()
 
     for p in (args.mesh_file, args.test_scene_dir, args.video):
@@ -356,6 +394,22 @@ if __name__ == "__main__":
         args.test_scene_dir,
         "--debug",
         str(args.debug),
+        "--device",
+        args.device,
+        "--track_refine_iter",
+        str(args.track_refine_iter),
+        "--smooth_window",
+        str(args.smooth_window),
+        "--smooth_polyorder",
+        str(args.smooth_polyorder),
     ]
+    if args.foundationpose_root:
+        cmd.extend(["--foundationpose_root", args.foundationpose_root])
+    if args.nvdiffrast_root:
+        cmd.extend(["--nvdiffrast_root", args.nvdiffrast_root])
+    if args.pytorch3d_root:
+        cmd.extend(["--pytorch3d_root", args.pytorch3d_root])
+    if args.require_mycpp:
+        cmd.append("--require_mycpp")
     success = run_subprocess(cmd, "FoundationPose tracking")
     sys.exit(0 if success else 1)

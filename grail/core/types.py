@@ -54,6 +54,13 @@ class ObjPoseTrackingConfig:
     foundation_pose_debug: int = 2
     crop_image: bool = False
     interpolation_factor: int = 1
+    foundationpose_root: str = "/workspace/FoundationPose_musa"
+    nvdiffrast_root: str = "/workspace/nvdiffrast_musa"
+    pytorch3d_root: str = "/workspace/pytorch3d_musa"
+    track_refine_iter: int = 2
+    smooth_window: int = 9
+    smooth_polyorder: int = 3
+    require_mycpp: bool = False
 
 
 @dataclass
@@ -185,6 +192,7 @@ def parse_recon_config(cfg: dict) -> dict:
     # Validate typed sections (catches wrong types/missing fields early)
     _from_dict(ReconPaths, cfg.get("paths", {}))
     _from_dict(HumanModelConfig, cfg.get("human_model", {}))
+    _from_dict(ObjPoseTrackingConfig, cfg.get("obj_pose_tracking", {}))
     _from_dict(FilteringConfig, cfg.get("filtering", {}))
     _from_dict(PostProcessingConfig, cfg.get("post_processing", {}))
     _from_dict(PipelineFlags, cfg.get("pipeline", {}))

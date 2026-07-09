@@ -50,25 +50,42 @@ import numpy as np
 # ---------------------------------------------------------------------------
 
 _PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-sys.path.insert(0, os.path.join(_PROJECT_ROOT, "imports", "FoundationPose"))
+_WORKSPACE_ROOT = os.path.dirname(_PROJECT_ROOT)
 sys.path.insert(0, _PROJECT_ROOT)
 
 
-def _setup_paths() -> None:
+def _has_foundationpose_source(path: str) -> bool:
+    return os.path.isfile(os.path.join(path, "estimater.py"))
+
+
+def _resolve_foundationpose_root(path: str) -> str:
+    candidates = [
+        os.path.abspath(os.path.expanduser(path)),
+        os.path.join(_PROJECT_ROOT, "imports", "FoundationPose"),
+    ]
+    for candidate in candidates:
+        if _has_foundationpose_source(candidate):
+            return candidate
+
+    sys.exit(
+        "FoundationPose not found at "
+        + " or ".join(candidates)
+        + "; expected estimater.py"
+    )
+
+
+def _setup_paths(foundationpose_root: str) -> None:
     """Ensure all required modules are importable."""
-    foundation_pose_dir = os.path.join(_PROJECT_ROOT, "imports", "FoundationPose")
-    if not os.path.isdir(foundation_pose_dir):
-        sys.exit(
-            f"FoundationPose not found at {foundation_pose_dir}. "
-            "Run: git submodule update --init --recursive"
-        )
+    foundation_pose_dir = _resolve_foundationpose_root(foundationpose_root)
+    if foundation_pose_dir not in sys.path:
+        sys.path.insert(0, foundation_pose_dir)
 
     weights = [
-        "imports/FoundationPose/weights/2023-10-28-18-33-37/model_best.pth",
-        "imports/FoundationPose/weights/2024-01-11-20-02-45/model_best.pth",
+        "weights/2023-10-28-18-33-37/model_best.pth",
+        "weights/2024-01-11-20-02-45/model_best.pth",
     ]
     for w in weights:
-        wpath = os.path.join(_PROJECT_ROOT, w)
+        wpath = os.path.join(foundation_pose_dir, w)
         if not os.path.exists(wpath):
             sys.exit(f"Weight file missing: {wpath}. Run: bash scripts/setup/download_checkpoints.sh")
 
@@ -84,6 +101,12 @@ def parse_args() -> argparse.Namespace:
         epilog=__doc__,
     )
     # Paths
+    parser.add_argument(
+        "--foundationpose_root",
+        type=str,
+        default=os.path.join(_WORKSPACE_ROOT, "FoundationPose_musa"),
+        help="Path to the FoundationPose checkout",
+    )
     parser.add_argument(
         "--mesh",
         type=str,
@@ -637,7 +660,7 @@ def main() -> None:
     )
 
     if not args.compare_only:
-        _setup_paths()
+        _setup_paths(args.foundationpose_root)
 
     # Determine output directory
     if args.output_dir:

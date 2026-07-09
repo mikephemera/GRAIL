@@ -9,6 +9,54 @@ import requests
 from tqdm import tqdm
 
 
+def _normalize_video_frame(image):
+    if hasattr(image, "cpu"):
+        image = image.cpu().numpy()
+
+    if len(image.shape) > 2:
+        image = image.squeeze()
+
+    if len(image.shape) == 2:
+        if image.dtype == bool or image.max() <= 1.0:
+            image = (image * 255).astype(np.uint8)
+        elif image.dtype != np.uint8:
+            image = image.astype(np.uint8)
+        image = cv2.cvtColor(image, cv2.COLOR_GRAY2RGB)
+    elif len(image.shape) == 3:
+        if image.dtype == bool or image.max() <= 1.0:
+            image = (image * 255).astype(np.uint8)
+        elif image.dtype != np.uint8:
+            image = image.astype(np.uint8)
+        if image.shape[2] == 1:
+            image = cv2.cvtColor(image[:, :, 0], cv2.COLOR_GRAY2RGB)
+        elif image.shape[2] == 4:
+            image = image[:, :, :3]
+    else:
+        raise ValueError(f"Unexpected image shape: {image.shape}")
+
+    return np.ascontiguousarray(image)
+
+
+def _write_video_with_cv2(frames, output_video_path, fps=30, desc="Writing video"):
+    frames = [_normalize_video_frame(frame) for frame in frames]
+    if not frames:
+        print("No images provided to save")
+        return False
+
+    height, width = frames[0].shape[:2]
+    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+    writer = cv2.VideoWriter(output_video_path, fourcc, fps, (width, height))
+    if not writer.isOpened():
+        return False
+
+    for frame in tqdm(frames, desc=desc):
+        if frame.shape[:2] != (height, width):
+            frame = cv2.resize(frame, (width, height))
+        writer.write(cv2.cvtColor(frame, cv2.COLOR_RGB2BGR))
+    writer.release()
+    return os.path.exists(output_video_path)
+
+
 def concat_videos(input_video, result_video, topview_video, output_path):
     """
     Concatenate input, result, and top-view videos into a single comparison video.
@@ -82,37 +130,14 @@ def save_images_to_video(images, output_video_path, fps=16, desc="Saving video")
 
     print(f"Saving {len(images)} images to video: {output_video_path}")
 
-    # Create video writer
-    with imageio.get_writer(output_video_path, fps=fps) as writer:
-        for image in tqdm(images, desc=desc):
-            # Convert tensor to numpy if needed
-            if hasattr(image, "cpu"):
-                image = image.cpu().numpy()
-
-            # Squeeze extra dimensions
-            if len(image.shape) > 2:
-                image = image.squeeze()
-
-            # Handle different image formats
-            if len(image.shape) == 2:
-                # Single channel (H, W) - convert to RGB for video
-                if image.dtype == bool or image.max() <= 1.0:
-                    # Binary mask or normalized values
-                    image = (image * 255).astype(np.uint8)
-                elif image.dtype != np.uint8:
-                    image = image.astype(np.uint8)
-                # Convert grayscale to RGB
-                image = cv2.cvtColor(image, cv2.COLOR_GRAY2RGB)
-            elif len(image.shape) == 3:
-                # Multi-channel (H, W, C)
-                if image.dtype == bool or image.max() <= 1.0:
-                    image = (image * 255).astype(np.uint8)
-                elif image.dtype != np.uint8:
-                    image = image.astype(np.uint8)
-            else:
-                raise ValueError(f"Unexpected image shape: {image.shape}")
-
-            writer.append_data(image)
+    try:
+        with imageio.get_writer(output_video_path, fps=fps) as writer:
+            for image in tqdm(images, desc=desc):
+                writer.append_data(_normalize_video_frame(image))
+    except Exception as exc:
+        print(f"imageio video writer failed ({exc}); falling back to OpenCV")
+        if not _write_video_with_cv2(images, output_video_path, fps=fps, desc=desc):
+            raise
 
     print(f"Video saved: {output_video_path}")
 
@@ -134,11 +159,16 @@ def compile_images_to_video(image_dir, output_video_path, fps=30, image_pattern=
 
     print(f"Compiling {len(image_files)} images into video: {output_video_path}")
 
-    # Create video writer
-    with imageio.get_writer(output_video_path, fps=fps) as writer:
-        for image_file in tqdm(image_files, desc="Compiling video"):
-            image = imageio.imread(image_file)
-            writer.append_data(image)
+    try:
+        with imageio.get_writer(output_video_path, fps=fps) as writer:
+            for image_file in tqdm(image_files, desc="Compiling video"):
+                image = imageio.imread(image_file)
+                writer.append_data(_normalize_video_frame(image))
+    except Exception as exc:
+        print(f"imageio video writer failed ({exc}); falling back to OpenCV")
+        frames = [imageio.imread(image_file) for image_file in image_files]
+        if not _write_video_with_cv2(frames, output_video_path, fps=fps, desc="Compiling video"):
+            raise
 
     print(f"Video saved: {output_video_path}")
 

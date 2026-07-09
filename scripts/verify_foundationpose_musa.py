@@ -42,7 +42,7 @@ DEFAULT_REF_ROOT = (
 
 def parse_args() -> argparse.Namespace:
   parser = argparse.ArgumentParser(description=__doc__)
-  parser.add_argument("--foundationpose_root", type=Path, default=WORKSPACE_ROOT / "FoundationPose")
+  parser.add_argument("--foundationpose_root", type=Path, default=WORKSPACE_ROOT / "FoundationPose_musa")
   parser.add_argument("--nvdiffrast_root", type=Path, default=WORKSPACE_ROOT / "nvdiffrast_musa")
   parser.add_argument("--pytorch3d_root", type=Path, default=WORKSPACE_ROOT / "pytorch3d_musa")
   parser.add_argument("--mesh", type=Path, default=GRAIL_ROOT / "results/generation/mesh/ComAsset/cordless_drill/model.obj")
