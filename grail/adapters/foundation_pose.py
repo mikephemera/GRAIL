@@ -156,6 +156,7 @@ if __name__ == "__main__":
 
     # Apply Savitzky-Golay smoothing to object poses (rotation + translation)
     logging.info("Applying temporal smoothing to object poses...")
+    #important note: on S5000, use --smooth_window 7 --smooth_polyorder 2 produced better results
     pose_list = smooth_pose_matrices(pose_list, window_length=9, polyorder=3)
     for i in range(len(pose_list)):
         color = reader.get_color(i)
