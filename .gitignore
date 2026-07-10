@@ -263,3 +263,4 @@ CLAUDE.md
 CLAUDE_*.mdly/
 results/generation/foundation_pose_output_musa/
 results/generation/4dhoi_recon_smplx_musa/
+results/generation/4dhoi_recon_smplx_musa_valid/
