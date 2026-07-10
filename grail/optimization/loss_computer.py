@@ -444,19 +444,16 @@ class LossComputer:
             max_faces_per_bin=50000,
             cull_backfaces=True,
         )
-        raster_device = (
-            torch.device("cpu") if str(self.device).startswith("musa") else torch.device(self.device)
-        )
-        raster_cameras = (
-            self.cameras.to(raster_device)
-            if raster_device.type != str(self.device).split(":", 1)[0]
-            else self.cameras
-        )
+        raster_device = torch.device(self.device)
+        raster_cameras = self.cameras.to(raster_device)
         rasterizer = MeshRasterizer(cameras=raster_cameras, raster_settings=raster_settings)
         depth_tol = 0.02
 
         cache = {"gt_human_pcs": {}, "gt_obj_pcs": {}, "human_vis_masks": {}, "obj_vis_masks": {}}
-        self.logger.info(f"Building depth loss cache for {frame_num} frames...")
+        self.logger.info(
+            f"Building depth loss cache for {frame_num} frames on {raster_device} "
+            f"(max {num_gt_samples} GT points per mask)..."
+        )
 
         for i in range(frame_num):
             human_mask = torch.from_numpy(data.human.masks[i]).squeeze().bool().to(self.device)
@@ -472,10 +469,17 @@ class LossComputer:
                 valid = mask & (depth_map > 0)
                 ys, xs = torch.where(valid)
                 if len(xs) > 0:
+                    # The loss consumes at most num_gt_samples points. Sampling before
+                    # unprojection is distribution-equivalent to sampling afterwards,
+                    # and avoids a large [1, N, 4] x [1, 4, 4] MUSA GEMM for full masks.
+                    if xs.shape[0] > num_gt_samples:
+                        sample_idx = torch.randperm(xs.shape[0], device=xs.device)[
+                            :num_gt_samples
+                        ]
+                        xs = xs[sample_idx]
+                        ys = ys[sample_idx]
                     pts = torch.stack([xs.float(), ys.float(), depth_map[ys, xs]], dim=1)
                     pc = unproject_depth_map_to_world(pts, self.cameras).detach()
-                    if pc.shape[0] > num_gt_samples:
-                        pc = pc[torch.randperm(pc.shape[0], device=self.device)[:num_gt_samples]]
                     cache[pc_key][i] = pc
                 else:
                     cache[pc_key][i] = torch.zeros((0, 3), device=self.device)

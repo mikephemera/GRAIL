@@ -28,8 +28,8 @@ def pre_eval(data, cameras, pre_eval_cfg, min_frames_threshold, device, logger):
     """
     obj_verts_seq = data.obj.verts_seq
     obj_faces = data.obj.faces
-    raster_device = torch.device("cpu") if str(device).startswith("musa") else torch.device(device)
-    raster_cameras = cameras.to(raster_device) if raster_device.type != str(device).split(":", 1)[0] else cameras
+    raster_device = torch.device(device)
+    raster_cameras = cameras.to(raster_device)
     obj_faces_raster = obj_faces.detach().to(raster_device)
     obj_colors = torch.tensor([0.0, 0.0, 1.0], device=raster_device)
 
