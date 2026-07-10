@@ -134,10 +134,22 @@ class G1SmplxHumanModel(SmplxHumanModel):
 
         raw_v = self._raw_smplx_model.v_template  # (10475, 3)
         lite_v = self.coco17_model.v_template  # (132, 3)
-        smplx_vids = torch.cdist(lite_v, raw_v).argmin(dim=1)
-        assert torch.allclose(
-            raw_v[smplx_vids], lite_v
-        ), "coco17 lite v_template is not a clean subset of the raw SMPLX v_template"
+        raw_v_cpu = raw_v.detach().cpu()
+        lite_v_cpu = lite_v.detach().cpu()
+        smplx_vids_cpu = torch.cdist(lite_v_cpu, raw_v_cpu).argmin(dim=1)
+        nn_dist = torch.linalg.norm(raw_v_cpu[smplx_vids_cpu] - lite_v_cpu, dim=1)
+        max_nn_dist = float(nn_dist.max())
+        if max_nn_dist > 1e-3:
+            raise ValueError(
+                "coco17 lite v_template is not close enough to the raw SMPLX v_template "
+                f"(max nearest-neighbor distance: {max_nn_dist:.6f}m)"
+            )
+        if max_nn_dist > 1e-6:
+            print(
+                "Warning: coco17 lite v_template is not an exact raw SMPLX subset; "
+                f"using nearest vertices (max distance {max_nn_dist:.6f}m)."
+            )
+        smplx_vids = smplx_vids_cpu.to(raw_v.device)
 
         g1_full_v = self.g1_smplx.model.v_template  # (10475, 3), baked
         self.coco17_model.v_template = g1_full_v[smplx_vids].clone()

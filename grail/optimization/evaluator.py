@@ -28,7 +28,10 @@ def pre_eval(data, cameras, pre_eval_cfg, min_frames_threshold, device, logger):
     """
     obj_verts_seq = data.obj.verts_seq
     obj_faces = data.obj.faces
-    obj_colors = torch.tensor([0.0, 0.0, 1.0], device=device)
+    raster_device = torch.device("cpu") if str(device).startswith("musa") else torch.device(device)
+    raster_cameras = cameras.to(raster_device) if raster_device.type != str(device).split(":", 1)[0] else cameras
+    obj_faces_raster = obj_faces.detach().to(raster_device)
+    obj_colors = torch.tensor([0.0, 0.0, 1.0], device=raster_device)
 
     tol = pre_eval_cfg.get("per_frame_tol", 0.5)
     total_tol = pre_eval_cfg.get("total_tol", 0.3)
@@ -42,19 +45,27 @@ def pre_eval(data, cameras, pre_eval_cfg, min_frames_threshold, device, logger):
         logger.info(f"Min frames threshold for truncation: {min_frames_threshold}")
 
     eval_mask_renderer = create_renderer(
-        cameras,
+        raster_cameras,
         (data.camera.frame_height, data.camera.frame_width),
         renderer_type=RendererType.HARD_PHONG,
         neutral_light=True,
         background_color=[0, 0, 0],
+        device=raster_device,
     )
 
     for i in range(frame_num):
-        obj_mesh = create_colored_meshes(obj_verts_seq[i], obj_faces, obj_colors)
-        _, pred_obj_mask = render_frame(obj_mesh, cameras, eval_mask_renderer, require_grad=False)
+        obj_mesh = create_colored_meshes(
+            obj_verts_seq[i].detach().to(raster_device),
+            obj_faces_raster,
+            obj_colors,
+            device=raster_device,
+        )
+        _, pred_obj_mask = render_frame(
+            obj_mesh, raster_cameras, eval_mask_renderer, require_grad=False
+        )
         pred_obj_mask = (pred_obj_mask > 0.1).float()
 
-        gt_obj_mask = torch.from_numpy(data.obj.masks[i]).to(device).squeeze(0).float()
+        gt_obj_mask = torch.from_numpy(data.obj.masks[i]).to(raster_device).squeeze(0).float()
 
         if gt_obj_mask.shape != pred_obj_mask.shape:
             gt_obj_mask = gt_obj_mask.unsqueeze(0).unsqueeze(0)

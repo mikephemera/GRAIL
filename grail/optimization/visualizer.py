@@ -14,7 +14,6 @@ from grail.core.torch_utils import tensor_to
 from grail.rendering.camera import get_camera
 from grail.rendering.renderer import create_renderer, render_frame
 from grail.rendering.textures import create_colored_meshes, create_mesh_with_vertex_colors
-from grail.visualization.scenepic import ScenepicVisualizer
 from grail.visualization.utils.vis_utils import motion_seq_to_scenepic, prep_visualizer_input
 
 
@@ -292,8 +291,12 @@ class HOIVisualizer:
                 obj_verts, obj_faces, obj_colors, device=self.device
             )
         else:
-            human_mesh = create_colored_meshes(human_verts_seq[frame_idx], human_faces, human_color)
-            obj_mesh = create_colored_meshes(obj_verts_seq[frame_idx], obj_faces, obj_color)
+            human_mesh = create_colored_meshes(
+                human_verts_seq[frame_idx], human_faces, human_color, device=self.device
+            )
+            obj_mesh = create_colored_meshes(
+                obj_verts_seq[frame_idx], obj_faces, obj_color, device=self.device
+            )
 
         scene_meshes = [human_mesh, obj_mesh]
         if static_meshes:
@@ -420,7 +423,9 @@ class HOIVisualizer:
                 static_seq = motion_seq[seq_key]
                 static_verts = tensor_to(static_seq["vertices"], device=self.device)
                 static_faces = tensor_to(static_seq["triangles"], device=self.device)
-                static_meshes.append(create_colored_meshes(static_verts, static_faces, table_color))
+                static_meshes.append(
+                    create_colored_meshes(static_verts, static_faces, table_color, device=self.device)
+                )
         return static_meshes
 
     def _create_result_symlinks(self, vis_name, extra_views):

@@ -444,7 +444,15 @@ class LossComputer:
             max_faces_per_bin=50000,
             cull_backfaces=True,
         )
-        rasterizer = MeshRasterizer(cameras=self.cameras, raster_settings=raster_settings)
+        raster_device = (
+            torch.device("cpu") if str(self.device).startswith("musa") else torch.device(self.device)
+        )
+        raster_cameras = (
+            self.cameras.to(raster_device)
+            if raster_device.type != str(self.device).split(":", 1)[0]
+            else self.cameras
+        )
+        rasterizer = MeshRasterizer(cameras=raster_cameras, raster_settings=raster_settings)
         depth_tol = 0.02
 
         cache = {"gt_human_pcs": {}, "gt_obj_pcs": {}, "human_vis_masks": {}, "obj_vis_masks": {}}
@@ -478,21 +486,26 @@ class LossComputer:
                     (human_verts_seq[i], human_faces, "human_vis_masks"),
                     (obj_verts_seq[i], obj_faces, "obj_vis_masks"),
                 ]:
-                    mesh = Meshes(verts=[verts], faces=[faces])
+                    verts_raster = verts.detach().to(raster_device)
+                    faces_raster = faces.detach().to(raster_device)
+                    mesh = Meshes(verts=[verts_raster], faces=[faces_raster])
                     zbuf = rasterizer(mesh).zbuf[..., 0].squeeze(0)
 
-                    screen = self.cameras.transform_points_screen(verts.unsqueeze(0)).squeeze(0)
+                    screen = raster_cameras.transform_points_screen(
+                        verts_raster.unsqueeze(0)
+                    ).squeeze(0)
                     cam_pts = (
-                        self.cameras.get_world_to_view_transform()
-                        .transform_points(verts.unsqueeze(0))
+                        raster_cameras.get_world_to_view_transform()
+                        .transform_points(verts_raster.unsqueeze(0))
                         .squeeze(0)
                     )
                     px = (screen[:, 0] * half_w / full_w).long().clamp(0, half_w - 1)
                     py = (screen[:, 1] * half_h / full_h).long().clamp(0, half_h - 1)
                     surface_depth = zbuf[py, px]
-                    cache[vis_key][i] = (surface_depth > 0) & (
+                    vis_mask = (surface_depth > 0) & (
                         torch.abs(cam_pts[:, 2] - surface_depth) < depth_tol
                     )
+                    cache[vis_key][i] = vis_mask.to(self.device)
 
         self._depth_loss_cache = cache
         self.logger.info("Depth loss cache built successfully.")

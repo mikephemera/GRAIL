@@ -40,6 +40,15 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 import numpy as np
 
 
+def _install_numpy_pickle_aliases() -> None:
+    core = getattr(np, "_core", np.core)
+    sys.modules.setdefault("numpy._core", core)
+    sys.modules.setdefault("numpy._core.multiarray", np.core.multiarray)
+    sys.modules.setdefault("numpy._core.numeric", np.core.numeric)
+    if hasattr(np.core, "_multiarray_umath"):
+        sys.modules.setdefault("numpy._core._multiarray_umath", np.core._multiarray_umath)
+
+
 # ---------------------------------------------------------------------------
 # Loaders for different file formats
 # ---------------------------------------------------------------------------
@@ -53,6 +62,7 @@ def load_file(path: str) -> Any:
     elif ext == ".npy":
         return np.load(path, allow_pickle=True)
     elif ext in (".pkl", ".pickle"):
+        _install_numpy_pickle_aliases()
         with open(path, "rb") as f:
             return pickle.load(f)
     elif ext == ".pt":

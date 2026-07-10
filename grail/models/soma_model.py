@@ -437,7 +437,7 @@ def generate_soma_mesh(
     # Get faces from the model
     faces = soma_model.faces
     if isinstance(faces, np.ndarray):
-        faces = torch.from_numpy(faces).to(device).long()
+        faces = torch.from_numpy(faces.astype(np.int64)).to(device).long()
     elif isinstance(faces, torch.Tensor):
         faces = faces.to(device).long()
 

@@ -22,6 +22,9 @@ _GEM_SMPL_ROOT = os.path.join(os.path.dirname(__file__), "..", "..", "imports", 
 def _setup_imports():
     """Add GEM-SMPL demo to sys.path and mock problematic modules."""
     demo_dir = os.path.join(_GEM_SMPL_ROOT, "tools", "demo")
+    gem_smpl_root = os.path.abspath(_GEM_SMPL_ROOT)
+    if gem_smpl_root not in sys.path:
+        sys.path.insert(0, gem_smpl_root)
     if demo_dir not in sys.path:
         sys.path.insert(0, demo_dir)
 

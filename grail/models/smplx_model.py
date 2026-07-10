@@ -183,7 +183,7 @@ def generate_smplx_mesh(
     vertices_sequence = smplx_output.vertices  # (frame_num, V, 3)
     transl = transl.reshape(frame_num, 1, 3)
     vertices_sequence = (vertices_sequence - transl) * scale + transl
-    faces = torch.from_numpy(smplx_model.faces).to(device).long()
+    faces = torch.from_numpy(smplx_model.faces.astype(np.int64)).to(device).long()
 
     if output_joints:
         joints = smplx_output.joints[:, : len(SMPLX_BONE_ORDER_NAMES), :3]

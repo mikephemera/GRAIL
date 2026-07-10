@@ -640,9 +640,6 @@ def load_mesh(mesh_path, mesh_scale=None, target_num_verts=None, device="cuda"):
     """
     import torch
     import trimesh
-    from pytorch3d.io import load_objs_as_meshes
-
-    from grail.rendering.textures import convert_textures_uv_to_vertex
 
     def remesh_to_target(trimesh_mesh, target_verts, tolerance=0.2):
         """
@@ -712,6 +709,8 @@ def load_mesh(mesh_path, mesh_scale=None, target_num_verts=None, device="cuda"):
 
     # Load mesh using PyTorch3D
     try:
+        from pytorch3d.io import load_objs_as_meshes
+
         meshes = load_objs_as_meshes([mesh_path], device=device)
         mesh = meshes[0]
 
@@ -744,6 +743,8 @@ def load_mesh(mesh_path, mesh_scale=None, target_num_verts=None, device="cuda"):
         textures = None
         if target_num_verts is None:
             # Only preserve textures if no remeshing was done
+            from grail.rendering.textures import convert_textures_uv_to_vertex
+
             textures = convert_textures_uv_to_vertex(mesh, device)
 
         print(f"Loaded object mesh: {len(verts)} vertices, {len(faces)} faces")

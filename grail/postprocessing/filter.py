@@ -297,6 +297,7 @@ def prepare_data_for_validation(hoi_data, human_model_cfg, device="cuda"):
         renderer_type=RendererType.HARD_PHONG,
         neutral_light=True,
         background_color=[0, 0, 0],
+        device=device,
     )
 
     # Generate human and object vertices sequence
@@ -391,7 +392,7 @@ def check_object_mask(data, cameras, mask_renderer, device, tol=0.5, total_tol=0
 
     total_err = 0
     for i in range(len(obj_verts_seq)):
-        obj_mesh = create_colored_meshes(obj_verts_seq[i], obj_faces, obj_colors)
+        obj_mesh = create_colored_meshes(obj_verts_seq[i], obj_faces, obj_colors, device=device)
         _, pred_obj_mask = render_frame(obj_mesh, cameras, mask_renderer, require_grad=False)
         pred_obj_mask = (pred_obj_mask > 0.1).float()
 

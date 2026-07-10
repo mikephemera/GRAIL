@@ -36,7 +36,6 @@ from grail.optimization.interaction import (
     identify_interaction_start_end_with_mask,
 )
 from grail.optimization.loss_computer import LossComputer
-from grail.optimization.visualizer import HOIVisualizer
 from grail.pose_est.utils import smooth_axis_angle_sequence, smooth_pose_sequence
 from grail.preprocessing.preprocess import load_depth_from_cache, load_masks_from_cache
 from grail.rendering.camera import (
@@ -46,7 +45,6 @@ from grail.rendering.camera import (
     project_world_to_screen,
     transform_pose_c2w,
 )
-from grail.visualization.scenepic import ScenepicVisualizer
 
 
 class HOIOptimizer:
@@ -694,6 +692,8 @@ class HOIOptimizer:
             raise ValueError("Data not initialized. Call init_data() first.")
 
         if self.enable_vis:
+            from grail.optimization.visualizer import HOIVisualizer
+
             self.visualizer = HOIVisualizer(
                 device=self.device,
                 human_model=self.human_model,
@@ -704,17 +704,23 @@ class HOIOptimizer:
                 obj_path=self.obj_path,
             )
             if self.vis_cfg.get("vis_html", False):
+                from grail.visualization.scenepic import ScenepicVisualizer
+
                 self.visualizer.sp_visualizer = ScenepicVisualizer()
             self.visualizer.init_vis_meshes(data)
 
-        pre_eval_pass, failed_frame = pre_eval(
-            data,
-            self.cameras,
-            self.pre_eval_cfg,
-            self.min_frames_threshold,
-            self.device,
-            self.logger,
-        )
+        if self.cfg.get("skip_pre_eval", False):
+            self.logger.warning("Skipping pre-evaluation because cfg.skip_pre_eval=True")
+            pre_eval_pass, failed_frame = True, None
+        else:
+            pre_eval_pass, failed_frame = pre_eval(
+                data,
+                self.cameras,
+                self.pre_eval_cfg,
+                self.min_frames_threshold,
+                self.device,
+                self.logger,
+            )
         if failed_frame is not None:
             truncate_data(data, failed_frame, self.logger)
             self.image_list = data.images_path

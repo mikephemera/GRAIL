@@ -1,5 +1,4 @@
 import torch
-from pytorch3d.loss import point_mesh_distance
 
 
 def l1_loss(A, B):
@@ -76,9 +75,9 @@ def contact_loss(verts_A, verts_B, num_vertices=2000, top_k=200, delta=0.001):
     """
 
     if verts_A.shape[0] > num_vertices:
-        verts_A = verts_A[torch.randperm(verts_A.shape[0])[:num_vertices]]
+        verts_A = verts_A[torch.randperm(verts_A.shape[0], device=verts_A.device)[:num_vertices]]
     if verts_B.shape[0] > num_vertices:
-        verts_B = verts_B[torch.randperm(verts_B.shape[0])[:num_vertices]]
+        verts_B = verts_B[torch.randperm(verts_B.shape[0], device=verts_B.device)[:num_vertices]]
 
     # Calculate pairwise distances between all human and object vertices
     distances = torch.cdist(verts_A.float(), verts_B.float())  # (N, M)
@@ -268,7 +267,9 @@ def contact_distribution_smoothness_loss(
 
     obj_verts = obj_verts_seq  # (T, M, 3)
     if obj_verts.shape[1] > num_obj_verts:
-        subsample_idx = torch.linspace(0, obj_verts.shape[1] - 1, num_obj_verts).long()
+        subsample_idx = torch.linspace(
+            0, obj_verts.shape[1] - 1, num_obj_verts, device=obj_verts.device
+        ).long()
         obj_verts = obj_verts[:, subsample_idx]  # (T, M', 3)
 
     dists = torch.cdist(obj_verts.float(), human_contact_verts_seq.float())  # (T, M', N)
@@ -334,7 +335,7 @@ def keypoint_loss(pred_keypoints, gt_keypoints, gt_conf=None, conf_thres=0.6):
         pred_keypoints = pred_keypoints[gt_conf > conf_thres]
 
     if pred_keypoints.shape[0] == 0:
-        return torch.tensor(0.0)
+        return torch.tensor(0.0, device=pred_keypoints.device)
 
     return torch.nn.functional.l1_loss(pred_keypoints, gt_keypoints)
 
