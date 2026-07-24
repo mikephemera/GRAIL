@@ -45,6 +45,16 @@ class HumanModelConfig:
     soma_shape_params_path: str = ""
     g1_smplx_params_path: str = ""
     g1_smplx_tpose_mesh_path: str = ""
+    # MUSA Step 1/2 runtime sources.  They remain optional so older configs
+    # keep their historical defaults while the new pipeline can be explicit.
+    genmo_root: str = ""
+    genmo_asset_root: str = ""
+    genmo_checkpoint: str | None = None
+    wilor_root: str = ""
+    wilor_pretrained_dir: str | None = None
+    sam2_model_id: str = "facebook/sam2-hiera-large"
+    moge_root: str = ""
+    moge_model_id: str = "Ruicheng/moge-2-vitl-normal"
 
 
 @dataclass

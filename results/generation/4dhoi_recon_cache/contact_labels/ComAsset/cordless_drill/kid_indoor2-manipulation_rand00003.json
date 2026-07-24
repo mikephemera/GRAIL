@@ -1,0 +1,55 @@
+{
+  "contact_labels": [
+    [
+      "R_Hand"
+    ],
+    [
+      "R_Hand"
+    ],
+    [
+      "R_Hand"
+    ],
+    [
+      "R_Hand",
+      "L_Hand"
+    ],
+    [
+      "R_Hand",
+      "L_Hand"
+    ],
+    [
+      "R_Hand",
+      "L_Hand"
+    ],
+    [
+      "R_Hand",
+      "L_Hand"
+    ],
+    [
+      "R_Hand",
+      "L_Hand"
+    ],
+    [
+      "R_Hand",
+      "L_Hand"
+    ],
+    [
+      "R_Hand",
+      "L_Hand"
+    ],
+    [
+      "R_Hand",
+      "L_Hand"
+    ],
+    [
+      "R_Hand",
+      "L_Hand"
+    ],
+    [
+      "R_Hand",
+      "L_Hand"
+    ]
+  ],
+  "contact_interval": 8,
+  "contact_start_idx": 20
+}

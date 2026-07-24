@@ -1,0 +1,367 @@
+{
+  "runtime": {
+    "torch": "2.7.1",
+    "device": "musa:7",
+    "device_name": "MTT S5000",
+    "device_count": 8,
+    "arch_list": [
+      "31"
+    ]
+  },
+  "sources": {
+    "genmo": true,
+    "genmo_inference": true,
+    "wilor": true,
+    "sam2": true,
+    "moge": true
+  },
+  "assets": {
+    "genmo_checkpoint": {
+      "path": "/workspace/GRAIL/imports/GEM-SMPL/outputs/mocap_mixed_v1/genmo/genmo_lg_jukebox_jukebox_new/version_0/checkpoints/last.ckpt",
+      "exists": true,
+      "lfs_pointer": false,
+      "size": 5661548006
+    },
+    "genmo_yolo": {
+      "path": "/workspace/GRAIL/imports/GEM-SMPL/inputs/checkpoints/yolo/yolov8x.pt",
+      "exists": true,
+      "lfs_pointer": false,
+      "size": 136890692
+    },
+    "genmo_vitpose": {
+      "path": "/workspace/GRAIL/imports/GEM-SMPL/inputs/checkpoints/vitpose/vitpose-h-multi-coco.pth",
+      "exists": true,
+      "lfs_pointer": false,
+      "size": 2549075546
+    },
+    "genmo_hmr2": {
+      "path": "/workspace/GRAIL/imports/GEM-SMPL/inputs/checkpoints/hmr2/epoch=10-step=25000.ckpt",
+      "exists": true,
+      "lfs_pointer": false,
+      "size": 2709494041
+    },
+    "genmo_vimo": {
+      "path": "/workspace/GRAIL/imports/GEM-SMPL/inputs/checkpoints/vimo/vimo_checkpoint.pth.tar",
+      "exists": true,
+      "lfs_pointer": false,
+      "size": 2791701351
+    },
+    "genmo_smplx": {
+      "path": "/workspace/GRAIL/imports/GEM-SMPL/inputs/checkpoints/body_models/smplx/SMPLX_NEUTRAL.npz",
+      "exists": true,
+      "lfs_pointer": false,
+      "size": 108752058
+    },
+    "wilor_model": {
+      "path": "/workspace/WiLoR_musa/wilor_mini/pretrained_models/wilor_final.ckpt",
+      "exists": true,
+      "lfs_pointer": false,
+      "size": 2564989533
+    },
+    "wilor_detector": {
+      "path": "/workspace/WiLoR_musa/wilor_mini/pretrained_models/detector.pt",
+      "exists": true,
+      "lfs_pointer": false,
+      "size": 53582271
+    },
+    "wilor_mano": {
+      "path": "/workspace/WiLoR_musa/wilor_mini/pretrained_models/MANO_RIGHT.pkl",
+      "exists": true,
+      "lfs_pointer": false,
+      "size": 3821356
+    },
+    "wilor_mano_mean": {
+      "path": "/workspace/WiLoR_musa/wilor_mini/pretrained_models/mano_mean_params.npz",
+      "exists": true,
+      "lfs_pointer": false,
+      "size": 1178
+    }
+  },
+  "caches": {
+    "genmo_t5": {
+      "path": "/root/.cache/huggingface/hub/models--t5-3b",
+      "exists": true,
+      "snapshot": "/root/.cache/huggingface/hub/models--t5-3b/snapshots/bed96aab9ee46012a5046386105ee5fd0ac572f0",
+      "files": {
+        "config.json": {
+          "path": "/root/.cache/huggingface/hub/models--t5-3b/snapshots/bed96aab9ee46012a5046386105ee5fd0ac572f0/config.json",
+          "exists": true,
+          "lfs_pointer": false,
+          "size": 1202
+        },
+        "model.safetensors": {
+          "path": "/root/.cache/huggingface/hub/models--t5-3b/snapshots/bed96aab9ee46012a5046386105ee5fd0ac572f0/model.safetensors",
+          "exists": true,
+          "lfs_pointer": false,
+          "size": 11406460256
+        },
+        "spiece.model": {
+          "path": "/root/.cache/huggingface/hub/models--t5-3b/snapshots/bed96aab9ee46012a5046386105ee5fd0ac572f0/spiece.model",
+          "exists": true,
+          "lfs_pointer": false,
+          "size": 791656
+        }
+      },
+      "status": "PASS"
+    },
+    "sam2": {
+      "path": "/root/.cache/huggingface/hub/models--facebook--sam2-hiera-large",
+      "exists": true,
+      "snapshot": "/root/.cache/huggingface/hub/models--facebook--sam2-hiera-large/snapshots/7442e4e9b732a508f80e141e7c2913437a3610ee",
+      "files": {
+        "sam2_hiera_large.pt": {
+          "path": "/root/.cache/huggingface/hub/models--facebook--sam2-hiera-large/snapshots/7442e4e9b732a508f80e141e7c2913437a3610ee/sam2_hiera_large.pt",
+          "exists": true,
+          "lfs_pointer": false,
+          "size": 897952466
+        }
+      },
+      "status": "PASS"
+    },
+    "moge": {
+      "path": "/root/.cache/huggingface/hub/models--Ruicheng--moge-2-vitl-normal",
+      "exists": true,
+      "snapshot": "/root/.cache/huggingface/hub/models--Ruicheng--moge-2-vitl-normal/snapshots/280741fd09bc3f403ccff9967784c2a391b52d2c",
+      "files": {
+        "model.pt": {
+          "path": "/root/.cache/huggingface/hub/models--Ruicheng--moge-2-vitl-normal/snapshots/280741fd09bc3f403ccff9967784c2a391b52d2c/model.pt",
+          "exists": true,
+          "lfs_pointer": false,
+          "size": 1323815904
+        }
+      },
+      "status": "PASS"
+    }
+  },
+  "imports": {
+    "status": "PASS",
+    "inference_module": "hmr4d.model.genmo.inference",
+    "data_loader_module": "hmr4d.model.genmo.inference",
+    "t5_layer_norm": "hmr4d.model.genmo.genmo_demo.MusaT5LayerNorm",
+    "training_registry_imported": false,
+    "optional_imports_loaded": {
+      "pytorch_lightning": false,
+      "wis3d": false,
+      "seaborn": false
+    }
+  },
+  "artifacts": {
+    "step1": {
+      "path": "results/generation/hmr_smplx_musa/ComAsset/cordless_drill/kid_indoor2-manipulation_rand00001.npz",
+      "status": "PASS",
+      "frames": 121,
+      "missing": {
+        "motion_global": [],
+        "motion_incam": []
+      },
+      "shapes": {
+        "poses": [
+          121,
+          165
+        ],
+        "trans": [
+          121,
+          3
+        ],
+        "left_hand_pose": [
+          121,
+          45
+        ],
+        "right_hand_pose": [
+          121,
+          45
+        ],
+        "vitpose": [
+          121,
+          17,
+          3
+        ],
+        "hand_keypoints_2d": [
+          121,
+          32,
+          3
+        ],
+        "foot_contact_probs": [
+          121,
+          4
+        ]
+      }
+    },
+    "step2_masks": {
+      "path": "/workspace/GRAIL/results/generation/4dhoi_recon_cache/masks/ComAsset/cordless_drill/kid_indoor2-manipulation_rand00001.npz",
+      "status": "PASS",
+      "frames": 121,
+      "object_ids_0_1": true
+    },
+    "step2_depth": {
+      "path": "/workspace/GRAIL/results/generation/4dhoi_recon_cache/depth/ComAsset/cordless_drill/kid_indoor2-manipulation_rand00001.pt",
+      "status": "PASS",
+      "frames": 121,
+      "first_shape": [
+        1280,
+        720
+      ],
+      "cpu_portable": true
+    }
+  },
+  "comparison": {
+    "path": "results/generation/hmr_smplx_musa/ComAsset/cordless_drill/kid_indoor2-manipulation_rand00001.npz",
+    "reference": "results/generation/hmr_smplx/ComAsset/cordless_drill/kid_indoor2-manipulation_rand00001.npz",
+    "status": "WARN",
+    "metrics": {
+      "motion_global": {
+        "poses": {
+          "status": "WARN",
+          "shape": [
+            121,
+            165
+          ],
+          "max_abs": 6.259994983673096,
+          "mean_abs": 0.012211742331380903,
+          "rmse": 0.07966493301531154,
+          "geodesic_degrees": {
+            "mean": 1.2921801117655212,
+            "p95": 4.344757008567655,
+            "max": 11.110676873021461
+          }
+        },
+        "betas": {
+          "status": "WARN",
+          "shape": [
+            10
+          ],
+          "max_abs": 0.19703413546085358,
+          "mean_abs": 0.07970597594976425,
+          "rmse": 0.09792721791687128
+        },
+        "trans": {
+          "status": "WARN",
+          "shape": [
+            121,
+            3
+          ],
+          "max_abs": 0.02389969676733017,
+          "mean_abs": 0.0049944804239042875,
+          "rmse": 0.008099266131404553
+        },
+        "left_hand_pose": {
+          "status": "WARN",
+          "shape": [
+            121,
+            45
+          ],
+          "max_abs": 0.039981573820114136,
+          "mean_abs": 0.0046139001245899145,
+          "rmse": 0.007015534757776051
+        },
+        "right_hand_pose": {
+          "status": "WARN",
+          "shape": [
+            121,
+            45
+          ],
+          "max_abs": 0.04880332946777344,
+          "mean_abs": 0.004509331933265204,
+          "rmse": 0.006970085712168176
+        }
+      },
+      "motion_incam": {
+        "poses": {
+          "status": "WARN",
+          "shape": [
+            121,
+            165
+          ],
+          "max_abs": 6.2822349071502686,
+          "mean_abs": 0.014366032907481398,
+          "rmse": 0.14185705173259158,
+          "geodesic_degrees": {
+            "mean": 1.288417928856584,
+            "p95": 4.344757008567655,
+            "max": 11.110676873021461
+          }
+        },
+        "betas": {
+          "status": "WARN",
+          "shape": [
+            10
+          ],
+          "max_abs": 0.19703413546085358,
+          "mean_abs": 0.07970597594976425,
+          "rmse": 0.09792721791687128
+        },
+        "trans": {
+          "status": "WARN",
+          "shape": [
+            121,
+            3
+          ],
+          "max_abs": 0.02521800994873047,
+          "mean_abs": 0.00525449385184066,
+          "rmse": 0.008570637570291608
+        },
+        "left_hand_pose": {
+          "status": "WARN",
+          "shape": [
+            121,
+            45
+          ],
+          "max_abs": 0.039981573820114136,
+          "mean_abs": 0.0046139001245899145,
+          "rmse": 0.007015534757776051
+        },
+        "right_hand_pose": {
+          "status": "WARN",
+          "shape": [
+            121,
+            45
+          ],
+          "max_abs": 0.04880332946777344,
+          "mean_abs": 0.004509331933265204,
+          "rmse": 0.006970085712168176
+        },
+        "vitpose": {
+          "status": "WARN",
+          "shape": [
+            121,
+            17,
+            3
+          ],
+          "max_abs": 7.8084716796875,
+          "mean_abs": 0.3205097467793848,
+          "rmse": 0.6066949768908917
+        },
+        "hand_keypoints_2d": {
+          "status": "WARN",
+          "shape": [
+            121,
+            32,
+            3
+          ],
+          "max_abs": 1.523834228515625,
+          "mean_abs": 0.08475412810144346,
+          "rmse": 0.1518525045348388
+        },
+        "foot_contact_probs": {
+          "status": "WARN",
+          "shape": [
+            121,
+            4
+          ],
+          "max_abs": 0.0007177591323852539,
+          "mean_abs": 9.202550758015026e-05,
+          "rmse": 0.00013611868726727988
+        },
+        "predicted_body_height": {
+          "status": "WARN",
+          "shape": [],
+          "max_abs": 0.002085447311401367,
+          "mean_abs": 0.002085447311401367,
+          "rmse": 0.002085447311401367
+        }
+      }
+    }
+  },
+  "blockers": [],
+  "preflight": "PASS"
+}

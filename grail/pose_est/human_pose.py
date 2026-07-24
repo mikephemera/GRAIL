@@ -344,15 +344,32 @@ def interp_smplx_mano_predictions(smplx_params):
     return smplx_params
 
 
-def run_human_pose_est_smplx(video_path, cache_dir, smplx_model_path=None):
+def run_human_pose_est_smplx(
+    video_path,
+    cache_dir,
+    smplx_model_path=None,
+    device="auto",
+    genmo_root=None,
+    genmo_asset_root=None,
+    genmo_checkpoint=None,
+    wilor_root=None,
+    wilor_pretrained_dir=None,
+    static_cam=True,
+):
     """
     Predict human pose using GENMO
     """
     from grail.adapters.gem_smpl import infer_human_pose as infer_human_pose_smplx
 
     smplx_pred = infer_human_pose_smplx(
-        video_path, cache_dir, is_static_cam=True
-    )  # WARNING: static_cam=True is used to avoid droid slam failure
+        video_path,
+        cache_dir,
+        is_static_cam=static_cam,
+        device=device,
+        genmo_root=genmo_root,
+        asset_root=genmo_asset_root,
+        checkpoint_path=genmo_checkpoint,
+    )
     smplx_global = smplx_pred["smpl_params_global"]
     data_path = os.path.join(os.path.dirname(__file__), "..", "constants", "smplx_handposes.npz")
     with np.load(data_path, allow_pickle=True) as data:
@@ -365,7 +382,12 @@ def run_human_pose_est_smplx(video_path, cache_dir, smplx_model_path=None):
     """
     Predict hand pose using WiLoR
     """
-    mano_preds = infer_hand_pose(video_path)
+    mano_preds = infer_hand_pose(
+        video_path,
+        device=device,
+        wilor_root=wilor_root,
+        pretrained_dir=wilor_pretrained_dir,
+    )
 
     """
     Fuse GENMO and WiLoR predictions
@@ -665,11 +687,31 @@ def run_human_pose_est_soma(video_path, cache_dir, soma_model_path=None):
 
 
 def run_human_pose_est(
-    video_path, model="smplx", cache_dir="cache", smplx_model_path=None, soma_model_path=None
+    video_path,
+    model="smplx",
+    cache_dir="cache",
+    smplx_model_path=None,
+    soma_model_path=None,
+    device="auto",
+    genmo_root=None,
+    genmo_asset_root=None,
+    genmo_checkpoint=None,
+    wilor_root=None,
+    wilor_pretrained_dir=None,
+    static_cam=True,
 ):
     if model in ["smplx", "g1_smplx"]:
         return run_human_pose_est_smplx(
-            video_path, cache_dir=cache_dir, smplx_model_path=smplx_model_path
+            video_path,
+            cache_dir=cache_dir,
+            smplx_model_path=smplx_model_path,
+            device=device,
+            genmo_root=genmo_root,
+            genmo_asset_root=genmo_asset_root,
+            genmo_checkpoint=genmo_checkpoint,
+            wilor_root=wilor_root,
+            wilor_pretrained_dir=wilor_pretrained_dir,
+            static_cam=static_cam,
         )
     elif model == "soma":
         return run_human_pose_est_soma(

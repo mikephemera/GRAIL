@@ -55,13 +55,21 @@ def vis_keypoints_data(video_path, vitpose, hand_keypoints_2d, cache_dir):
             hand_keypoints_2d = hand_keypoints_2d.cpu().numpy()
         hand_keypoints_2d = np.array(hand_keypoints_2d)
 
-    # Read video frames
-    reader = imageio.get_reader(video_path)
-    fps = reader.get_meta_data().get("fps", 30)
+    # Read through OpenCV. ImageIO/PyAV metadata probing can fail on otherwise
+    # valid MP4 files when the stream reports a missing average frame rate.
+    capture = cv2.VideoCapture(video_path)
+    if not capture.isOpened():
+        raise RuntimeError(f"Could not open video: {video_path}")
+    fps = capture.get(cv2.CAP_PROP_FPS)
+    if not fps or not np.isfinite(fps):
+        fps = 30.0
     frames = []
-    for frame in reader:
-        frames.append(frame)
-    reader.close()
+    while True:
+        ok, frame_bgr = capture.read()
+        if not ok:
+            break
+        frames.append(cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB))
+    capture.release()
 
     num_frames = len(frames)
     print(f"Processing {num_frames} frames from video: {video_path}")
@@ -382,10 +390,20 @@ def vis_keypoints_data(video_path, vitpose, hand_keypoints_2d, cache_dir):
     os.makedirs(cache_dir, exist_ok=True)
     output_path = os.path.join(cache_dir, "keypoints_visualization.mp4")
 
-    writer = imageio.get_writer(output_path, fps=fps, codec="libx264", quality=8)
+    if not output_frames:
+        raise RuntimeError(f"No frames were decoded from video: {video_path}")
+    height, width = output_frames[0].shape[:2]
+    writer = cv2.VideoWriter(
+        output_path,
+        cv2.VideoWriter_fourcc(*"mp4v"),
+        float(fps),
+        (width, height),
+    )
+    if not writer.isOpened():
+        raise RuntimeError(f"Could not create visualization video: {output_path}")
     for frame in output_frames:
-        writer.append_data(frame)
-    writer.close()
+        writer.write(cv2.cvtColor(frame, cv2.COLOR_RGB2BGR))
+    writer.release()
 
     print(f"Saved keypoints visualization to: {output_path}")
     return output_path

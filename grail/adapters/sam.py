@@ -1,5 +1,9 @@
+import gc
+
 import numpy as np
 import torch
+
+from grail.core.device import empty_cache, require_musa
 
 
 def get_bbox_from_mask(mask, padding_ratio=0.05):
@@ -49,7 +53,15 @@ def get_bbox_from_mask(mask, padding_ratio=0.05):
     return [x1, y1, x2, y2]
 
 
-def track_masks_from_bbox(bboxes, video_path, device="cuda", output_threshold=0.0, frame_idx=0):
+@torch.inference_mode()
+def track_masks_from_bbox(
+    bboxes,
+    video_path,
+    device="auto",
+    output_threshold=0.0,
+    frame_idx=0,
+    model_id="facebook/sam2-hiera-large",
+):
     """
     Track multiple bounding boxes throughout a video using SAM2.
 
@@ -66,8 +78,8 @@ def track_masks_from_bbox(bboxes, video_path, device="cuda", output_threshold=0.
     """
     from sam2.sam2_video_predictor import SAM2VideoPredictor
 
-    # Initialize SAM2 predictor
-    predictor = SAM2VideoPredictor.from_pretrained("facebook/sam2-hiera-large", device=device)
+    device = require_musa(device, "SAM2")
+    predictor = SAM2VideoPredictor.from_pretrained(model_id, device=device)
 
     # Create inference state for the video
     inference_state = predictor.init_state(video_path=video_path)
@@ -103,10 +115,21 @@ def track_masks_from_bbox(bboxes, video_path, device="cuda", output_threshold=0.
                 video_masks[out_frame_idx] = {}
             video_masks[out_frame_idx][out_obj_id] = binary_mask
 
+    del inference_state, predictor
+    gc.collect()
+    empty_cache(device)
     return video_masks
 
 
-def track_masks(masks, video_path, device="cuda", output_threshold=0.0, frame_idx=0):
+@torch.inference_mode()
+def track_masks(
+    masks,
+    video_path,
+    device="auto",
+    output_threshold=0.0,
+    frame_idx=0,
+    model_id="facebook/sam2-hiera-large",
+):
     """
     Track masks throughout a video using SAM2.
 
@@ -123,8 +146,8 @@ def track_masks(masks, video_path, device="cuda", output_threshold=0.0, frame_id
     """
     from sam2.sam2_video_predictor import SAM2VideoPredictor
 
-    # Initialize SAM2 predictor
-    predictor = SAM2VideoPredictor.from_pretrained("facebook/sam2-hiera-large", device=device)
+    device = require_musa(device, "SAM2")
+    predictor = SAM2VideoPredictor.from_pretrained(model_id, device=device)
 
     # Create inference state for the video
     inference_state = predictor.init_state(video_path=video_path)
@@ -169,4 +192,7 @@ def track_masks(masks, video_path, device="cuda", output_threshold=0.0, frame_id
                 video_masks[out_frame_idx] = {}
             video_masks[out_frame_idx][out_obj_id] = binary_mask
 
+    del inference_state, predictor
+    gc.collect()
+    empty_cache(device)
     return video_masks

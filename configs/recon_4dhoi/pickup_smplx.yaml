@@ -29,6 +29,14 @@ human_model:
   soma_model_path: "imports/GEM-SOMA/inputs/mhr_data/mhr_model.pt"
   soma_shape_params_path: "data/RenderPeople_fitsoma"
   g1_smplx_dir: "data/g1_smplx"
+  genmo_root: "/workspace/GENMO_musa"
+  genmo_asset_root: "/workspace/GRAIL/imports/GEM-SMPL"
+  genmo_checkpoint: null
+  wilor_root: "/workspace/WiLoR_musa"
+  wilor_pretrained_dir: null
+  sam2_model_id: "facebook/sam2-hiera-large"
+  moge_root: "/workspace/GRAIL/imports/MoGe"
+  moge_model_id: "Ruicheng/moge-2-vitl-normal"
 
 # ── Object pose tracking config ──────────────────────────────────────────────
 obj_pose_tracking:

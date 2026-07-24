@@ -16,13 +16,29 @@ from pathlib import Path
 
 import torch
 
-_GEM_SMPL_ROOT = os.path.join(os.path.dirname(__file__), "..", "..", "imports", "GEM-SMPL")
+from grail.core.device import empty_cache, require_musa
 
 
-def _setup_imports():
+_GRAIL_ROOT = Path(__file__).resolve().parents[2]
+_DEFAULT_GENMO_ROOT = _GRAIL_ROOT.parent / "GENMO_musa"
+
+
+def _setup_imports(genmo_root):
     """Add GEM-SMPL demo to sys.path and mock problematic modules."""
-    demo_dir = os.path.join(_GEM_SMPL_ROOT, "tools", "demo")
-    gem_smpl_root = os.path.abspath(_GEM_SMPL_ROOT)
+    gem_smpl_root = os.path.abspath(genmo_root)
+    demo_dir = os.path.join(gem_smpl_root, "tools", "demo")
+    if not os.path.isfile(os.path.join(gem_smpl_root, "hmr4d", "__init__.py")):
+        raise FileNotFoundError(f"GENMO source tree not found: {gem_smpl_root}")
+    if not os.path.isfile(os.path.join(demo_dir, "demo_slam.py")):
+        raise FileNotFoundError(f"GENMO demo entrypoint not found: {demo_dir}/demo_slam.py")
+
+    loaded_hmr4d = sys.modules.get("hmr4d")
+    loaded_path = getattr(loaded_hmr4d, "__file__", None)
+    if loaded_path and not os.path.abspath(loaded_path).startswith(gem_smpl_root + os.sep):
+        raise RuntimeError(
+            f"hmr4d is already imported from {loaded_path}, but Step 1 requested {gem_smpl_root}. "
+            "Run Step 1 in a fresh Python process."
+        )
     if gem_smpl_root not in sys.path:
         sys.path.insert(0, gem_smpl_root)
     if demo_dir not in sys.path:
@@ -55,7 +71,25 @@ def _setup_imports():
         sys.modules["hmr4d.utils.vis.o3d_render"] = mock
 
 
-def infer_human_pose(video_path, cache_dir, is_static_cam=False, verbose=False):
+def _reject_lfs_pointer(path, label):
+    path = Path(path)
+    if not path.is_file():
+        raise FileNotFoundError(f"{label} not found: {path}")
+    with path.open("rb") as handle:
+        if handle.read(40).startswith(b"version https://git-lfs.github.com/spec"):
+            raise RuntimeError(f"{label} is a Git LFS pointer, not materialized data: {path}")
+
+
+def infer_human_pose(
+    video_path,
+    cache_dir,
+    is_static_cam=False,
+    verbose=False,
+    device="auto",
+    genmo_root=None,
+    asset_root=None,
+    checkpoint_path=None,
+):
     """
     Run GEM-SMPL (hmr4d) human pose estimation on a video.
 
@@ -67,6 +101,16 @@ def infer_human_pose(video_path, cache_dir, is_static_cam=False, verbose=False):
             "foot_contact_probs": (L, 4) or None,
         }
     """
+    device = require_musa(device, "GENMO")
+    genmo_root = Path(genmo_root or _DEFAULT_GENMO_ROOT).expanduser().resolve()
+    asset_root = Path(asset_root or genmo_root).expanduser().resolve()
+    if not (asset_root / "inputs" / "checkpoints").is_dir():
+        raise FileNotFoundError(f"GENMO checkpoint bundle not found under asset root: {asset_root}")
+    os.environ["HMR4D_PROJECT_ROOT"] = str(asset_root)
+    # Install the GENMO source path before checking the cache.  The cached
+    # inference fast path must still leave the SMPL-X height post-processing
+    # able to import hmr4d body-model utilities.
+    _setup_imports(genmo_root)
     output_dir = os.path.abspath(cache_dir)
     output_root_abs = os.path.dirname(output_dir)
     os.makedirs(output_dir, exist_ok=True)
@@ -74,21 +118,19 @@ def infer_human_pose(video_path, cache_dir, is_static_cam=False, verbose=False):
     # Check for cached results
     cached_results = os.path.join(output_dir, "gem_smpl_pred.pt")
     if os.path.exists(cached_results):
+        _reject_lfs_pointer(cached_results, "GEM-SMPL cache")
         print(f"[GEM-SMPL] Loading cached results from {cached_results}")
-        return torch.load(cached_results, map_location="cpu")
+        return torch.load(cached_results, map_location="cpu", weights_only=False)
 
     t0 = time.time()
     video_path_abs = os.path.abspath(video_path)
 
     # Setup imports and run directly
-    _setup_imports()
-
     import cv2
     import hmr4d.model.genmo.genmo_demo  # noqa: F401 — registers genmo_demo model config
+    import hmr4d.model.gvhmr.utils.endecoder  # noqa: F401 — registers inference endecoder config
     import hydra
-    from demo_slam import load_data_dict, run_preprocess
-    from hmr4d.configs import register_store_gvhmr
-    from hmr4d.model.gvhmr.gvhmr_pl_demo import DemoPL
+    from hmr4d.model.genmo.inference import load_data_dict, run_preprocess
     from hmr4d.utils.net_utils import detach_to_cpu
     from hmr4d.utils.pylogger import Log
     from hmr4d.utils.video_io_utils import get_video_lwh
@@ -101,7 +143,6 @@ def infer_human_pose(video_path, cache_dir, is_static_cam=False, verbose=False):
     orig_fps = cv2.VideoCapture(str(video_path_obj)).get(cv2.CAP_PROP_FPS)
     Log.info(f"[GEM-SMPL] Input: {video_path_obj}, (L, W, H) = ({length}, {width}, {height})")
 
-    register_store_gvhmr()
     overrides = [
         f"video_name={video_path_obj.stem}",
         f"static_cam={is_static_cam}",
@@ -112,8 +153,12 @@ def infer_human_pose(video_path, cache_dir, is_static_cam=False, verbose=False):
         cfg = compose(config_name="demo_genmo", overrides=overrides)
 
     # Override ckpt_path to absolute path so it doesn't depend on CWD
-    gem_smpl_root = os.path.abspath(_GEM_SMPL_ROOT)
-    cfg.ckpt_path = os.path.join(gem_smpl_root, cfg.ckpt_path)
+    gem_smpl_root = str(genmo_root)
+    if checkpoint_path:
+        cfg.ckpt_path = str(Path(checkpoint_path).expanduser().resolve())
+    else:
+        cfg.ckpt_path = os.path.join(str(asset_root), cfg.ckpt_path)
+    _reject_lfs_pointer(cfg.ckpt_path, "GENMO checkpoint")
 
     paths = cfg.paths
     Path(cfg.output_dir).mkdir(parents=True, exist_ok=True)
@@ -135,13 +180,13 @@ def infer_human_pose(video_path, cache_dir, is_static_cam=False, verbose=False):
         writer.close()
         reader.close()
 
-    # GEM-SMPL code uses bare "inputs/checkpoints/..." paths from CWD,
-    # so temporarily chdir to GEM-SMPL root while running its functions.
+    # GEM-SMPL contains historical relative checkpoint paths. Run with the
+    # materialized asset bundle as CWD while importing code from GENMO_musa.
     prev_cwd = os.getcwd()
-    os.chdir(gem_smpl_root)
+    os.chdir(asset_root)
     try:
         # Preprocess (bbx tracking, vitpose, vit features, VIMO, optionally DROID-SLAM)
-        run_preprocess(cfg, orig_fps)
+        run_preprocess(cfg, orig_fps, device=str(device))
 
         # Load preprocessed data
         data = load_data_dict(cfg)
@@ -149,9 +194,9 @@ def infer_human_pose(video_path, cache_dir, is_static_cam=False, verbose=False):
         # Run HMR4D inference
         if not Path(paths.hmr4d_results).exists():
             Log.info("[GEM-SMPL] Running HMR4D prediction")
-            model: DemoPL = hydra.utils.instantiate(cfg.model, _recursive_=False)
+            model = hydra.utils.instantiate(cfg.model, _recursive_=False)
             model.load_pretrained_model(cfg.ckpt_path)
-            model = model.eval().cuda()
+            model = model.eval().to(device)
             pred = model.predict(data, static_cam=cfg.static_cam)
             pred = detach_to_cpu(pred)
             torch.save(pred, paths.hmr4d_results)
@@ -161,17 +206,19 @@ def infer_human_pose(video_path, cache_dir, is_static_cam=False, verbose=False):
             # be released before downstream steps (SAM2, FoundationPose) run.
             del model
             gc.collect()
-            torch.cuda.empty_cache()
+            empty_cache(device)
         else:
             Log.info(f"[GEM-SMPL] Loading cached HMR4D results from {paths.hmr4d_results}")
-            pred = torch.load(paths.hmr4d_results, map_location="cpu")
+            _reject_lfs_pointer(paths.hmr4d_results, "HMR4D cache")
+            pred = torch.load(paths.hmr4d_results, map_location="cpu", weights_only=False)
     finally:
         os.chdir(prev_cwd)
 
     # Load vitpose
     vitpose = None
     if os.path.exists(paths.vitpose):
-        vitpose = torch.load(paths.vitpose, map_location="cpu")
+        _reject_lfs_pointer(paths.vitpose, "ViTPose cache")
+        vitpose = torch.load(paths.vitpose, map_location="cpu", weights_only=False)
         if isinstance(vitpose, tuple):
             vitpose = vitpose[0]
 

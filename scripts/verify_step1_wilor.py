@@ -58,7 +58,10 @@ def load_gem_smpl_cache(cache_dir: str) -> dict:
     cache_path = os.path.join(cache_dir, "gem_smpl_pred.pt")
     if not os.path.exists(cache_path):
         raise FileNotFoundError(f"GEM-SMPL cache not found: {cache_path}")
-    return torch.load(cache_path, map_location="cpu")
+    with open(cache_path, "rb") as handle:
+        if handle.read(40).startswith(b"version https://git-lfs.github.com/spec"):
+            raise RuntimeError(f"GEM-SMPL cache is a Git LFS pointer, not data: {cache_path}")
+    return torch.load(cache_path, map_location="cpu", weights_only=False)
 
 
 def load_reference_npz(npz_path: str) -> dict:
@@ -441,6 +444,24 @@ def main():
         default=None,
         help="If set, save current WiLoR mano_preds to this .pkl (for later use as --external_mano_preds)",
     )
+    parser.add_argument(
+        "--device",
+        type=str,
+        default="musa:0",
+        help="MUSA device for WiLoR inference",
+    )
+    parser.add_argument(
+        "--wilor_root",
+        type=str,
+        default="/workspace/WiLoR_musa",
+        help="Materialized WiLoR_musa source tree",
+    )
+    parser.add_argument(
+        "--wilor_pretrained_dir",
+        type=str,
+        default=None,
+        help="Directory containing WiLoR MANO/checkpoint/detector assets",
+    )
     args = parser.parse_args()
 
     # Resolve project-relative paths
@@ -461,7 +482,12 @@ def main():
         print(f"[2/4] Running WiLoR on: {args.video_path}")
         from grail.adapters.wilor import infer_hand_pose
 
-        mano_preds = infer_hand_pose(args.video_path)
+        mano_preds = infer_hand_pose(
+            args.video_path,
+            device=args.device,
+            wilor_root=args.wilor_root,
+            pretrained_dir=args.wilor_pretrained_dir,
+        )
 
         if args.save_external_mano_preds:
             with open(args.save_external_mano_preds, "wb") as f:

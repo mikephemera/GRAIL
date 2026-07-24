@@ -28,6 +28,7 @@ from tqdm import tqdm
 
 from grail.core.config import load_recon_config
 from grail.core.dataset import category2object
+from grail.core.device import empty_cache, prepare_device
 from grail.core.io import load_hoi_data, save_hoi_data, save_human_motion_data, vis_keypoints_data
 from grail.core.logging import create_logger
 from grail.core.torch_utils import tensor_to_numpy
@@ -46,54 +47,6 @@ def _strip_mp4(video_id):
 def _origin_id(video_id):
     """Strip -end suffix to get the original video ID."""
     return video_id[: video_id.find("-end")] if "end" in video_id else video_id
-
-
-def _musa_available():
-    try:
-        import torch_musa  # noqa: F401
-    except Exception:
-        return False
-    try:
-        return bool(torch.musa.is_available())
-    except Exception:
-        return False
-
-
-def _resolve_device(device):
-    """Resolve the pipeline device with a MUSA-first auto policy."""
-    requested = str(device or "auto")
-    lower = requested.lower()
-
-    if lower == "auto":
-        if _musa_available():
-            return "musa:0"
-        if torch.cuda.is_available():
-            return "cuda:0"
-        return "cpu"
-
-    if lower == "musa":
-        return "musa:0"
-
-    if lower == "cuda" and not torch.cuda.is_available() and _musa_available():
-        return "musa:0"
-
-    if lower.startswith("cuda:") and not torch.cuda.is_available() and _musa_available():
-        return "musa:" + requested.split(":", 1)[1]
-
-    return requested
-
-
-def _empty_cache_for_device(device):
-    lower = str(device).lower()
-    if lower.startswith("musa"):
-        try:
-            import torch_musa  # noqa: F401
-
-            torch.musa.empty_cache()
-        except Exception:
-            pass
-    elif lower.startswith("cuda") and torch.cuda.is_available():
-        torch.cuda.empty_cache()
 
 
 def _load_masks_from_cache(cache_file):
@@ -137,6 +90,13 @@ def step1_predict_human_motion(video_ids, args):
                 cache_dir=cache_dir,
                 smplx_model_path=getattr(args, "smplx_model_path", None),
                 soma_model_path=getattr(args, "soma_model_path", None),
+                device=args.device,
+                genmo_root=args.genmo_root,
+                genmo_asset_root=args.genmo_asset_root,
+                genmo_checkpoint=args.genmo_checkpoint,
+                wilor_root=args.wilor_root,
+                wilor_pretrained_dir=args.wilor_pretrained_dir,
+                static_cam=getattr(args, "static_cam", True),
             )
             global_motion = tensor_to_numpy(motion_data["motion_global"])
             incam_motion = tensor_to_numpy(motion_data["motion_incam"])
@@ -200,6 +160,7 @@ def step2_preprocess_data(video_ids, args):
                     cache_file=masks_cache,
                     device=args.device,
                     debug_dir=debug_dir,
+                    model_id=args.sam2_model_id,
                 )
 
             # Estimate depth
@@ -247,6 +208,8 @@ def step2_preprocess_data(video_ids, args):
                     first_frame_human_mask=first_human_mask,
                     intrinsics=intrinsics,
                     device=args.device,
+                    moge_root=args.moge_root,
+                    model_id=args.moge_model_id,
                 )
 
                 if args.verbose and intrinsics:
@@ -599,6 +562,21 @@ def main():
     parser.add_argument("--job_chunk_idx", type=int, default=0)
     parser.add_argument("--results_dir", type=str, default=None)
     parser.add_argument("--video_dir", type=str, default=None)
+    parser.add_argument("--hmr_dir", "--hmr-dir", dest="hmr_dir", type=str, default=None)
+    parser.add_argument(
+        "--hmr_cache_dir",
+        "--hmr-cache-dir",
+        dest="hmr_cache_dir",
+        type=str,
+        default=None,
+    )
+    parser.add_argument(
+        "--recon_cache_dir",
+        "--recon-cache-dir",
+        dest="recon_cache_dir",
+        type=str,
+        default=None,
+    )
     parser.add_argument("--output_dir", type=str, default=None)
     parser.add_argument(
         "--foundation_pose_output_dir",
@@ -628,6 +606,62 @@ def main():
         type=str,
         default=str(WORKSPACE_ROOT / "pytorch3d_musa"),
     )
+    parser.add_argument(
+        "--genmo_root",
+        "--genmo-root",
+        dest="genmo_root",
+        type=str,
+        default=str(WORKSPACE_ROOT / "GENMO_musa"),
+    )
+    parser.add_argument(
+        "--genmo_checkpoint",
+        "--genmo-checkpoint",
+        dest="genmo_checkpoint",
+        type=str,
+        default=None,
+    )
+    parser.add_argument(
+        "--genmo_asset_root",
+        "--genmo-asset-root",
+        dest="genmo_asset_root",
+        type=str,
+        default=str(GRAIL_ROOT / "imports" / "GEM-SMPL"),
+    )
+    parser.add_argument(
+        "--wilor_root",
+        "--wilor-root",
+        dest="wilor_root",
+        type=str,
+        default=str(WORKSPACE_ROOT / "WiLoR_musa"),
+    )
+    parser.add_argument(
+        "--wilor_pretrained_dir",
+        "--wilor-pretrained-dir",
+        dest="wilor_pretrained_dir",
+        type=str,
+        default=None,
+    )
+    parser.add_argument(
+        "--sam2_model_id",
+        "--sam2-model-id",
+        dest="sam2_model_id",
+        type=str,
+        default="facebook/sam2-hiera-large",
+    )
+    parser.add_argument(
+        "--moge_root",
+        "--moge-root",
+        dest="moge_root",
+        type=str,
+        default=str(GRAIL_ROOT / "imports" / "MoGe"),
+    )
+    parser.add_argument(
+        "--moge_model_id",
+        "--moge-model-id",
+        dest="moge_model_id",
+        type=str,
+        default="Ruicheng/moge-2-vitl-normal",
+    )
     parser.add_argument("--track_refine_iter", "--track-refine-iter", type=int, default=2)
     parser.add_argument("--smooth_window", "--smooth-window", type=int, default=9)
     parser.add_argument("--smooth_polyorder", "--smooth-polyorder", type=int, default=3)
@@ -650,7 +684,7 @@ def main():
     cfg = parse_recon_config(cfg)
     args.cfg = cfg
 
-    args.device = _resolve_device(args.device)
+    args.device = str(prepare_device(args.device))
 
     # Discover videos
     if args.video_id is not None:
@@ -687,7 +721,7 @@ def main():
                 # Free GPU memory between steps to avoid OOM (e.g., GEM-SMPL
                 # holds ~7.6 GiB that SAM2 needs for frame loading in step 2).
                 gc.collect()
-                _empty_cache_for_device(args.device)
+                empty_cache(args.device)
     except KeyboardInterrupt:
         print("\nInterrupted")
         success = False

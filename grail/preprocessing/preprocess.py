@@ -30,8 +30,9 @@ def preprocess_masks(
     first_frame_obj_mask_path,
     first_frame_human_mask_path,
     cache_file,
-    device="cuda",
+    device="auto",
     debug_dir=None,
+    model_id="facebook/sam2-hiera-large",
 ):
     """
     Track segmentation masks through the video using SAM2.
@@ -78,7 +79,11 @@ def preprocess_masks(
     # Track masks through the video
     # Object mask = obj_id 0, Human mask = obj_id 1
     video_masks = track_masks(
-        [first_frame_obj_mask, first_frame_human_mask], temp_rgb_dir, device=device, frame_idx=0
+        [first_frame_obj_mask, first_frame_human_mask],
+        temp_rgb_dir,
+        device=device,
+        frame_idx=0,
+        model_id=model_id,
     )
 
     # Save masks to cache (compressed to reduce file size)
@@ -111,7 +116,9 @@ def preprocess_depth(
     first_frame_obj_mask=None,
     first_frame_human_mask=None,
     intrinsics=None,
-    device="cuda",
+    device="auto",
+    moge_root=None,
+    model_id="Ruicheng/moge-2-vitl-normal",
 ):
     """
     Estimate per-frame metric depth with MoGe, optionally aligning to
@@ -147,6 +154,8 @@ def preprocess_depth(
         device=device,
         intrinsics=intrinsics,
         gt_depth_first_frame=gt_depth_first_frame,
+        moge_root=moge_root,
+        model_id=model_id,
     )
 
     # Align depth with ground truth (per-frame)
@@ -160,6 +169,10 @@ def preprocess_depth(
             first_frame_human_mask=first_frame_human_mask,
             device=device,
         )
+
+    # Persist CPU tensors so the Step 2 artifact is portable and downstream
+    # consumers can choose their own device through map_location.
+    depth_list = [depth.detach().cpu() for depth in depth_list]
 
     # Save depth to cache
     os.makedirs(os.path.dirname(cache_file), exist_ok=True)
