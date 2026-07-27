@@ -15,10 +15,26 @@ shift 2
 
 OUTPUT_BASE="data/motion_lib/${OUTPUT_FOLDER}"
 
-# Activate the retargeting env (ships GMR + mujoco + smplx + isaaclab + pxr).
-# Override with GRAIL_SONIC_ENV=<name> when using a non-default environment.
-eval "$(conda shell.bash hook)"
-conda activate "${GRAIL_SONIC_ENV:-sonic}"
+# Activate the retargeting env when conda is available. Retarget-only Docker
+# images may install into the active Python instead; in that case keep going.
+if command -v conda &>/dev/null; then
+    eval "$(conda shell.bash hook)"
+elif [[ -f "/root/miniconda3/etc/profile.d/conda.sh" ]]; then
+    # shellcheck disable=SC1091
+    source "/root/miniconda3/etc/profile.d/conda.sh"
+elif [[ -f "/root/anaconda3/etc/profile.d/conda.sh" ]]; then
+    # shellcheck disable=SC1091
+    source "/root/anaconda3/etc/profile.d/conda.sh"
+elif [[ -f "/opt/conda/etc/profile.d/conda.sh" ]]; then
+    # shellcheck disable=SC1091
+    source "/opt/conda/etc/profile.d/conda.sh"
+fi
+
+if command -v conda &>/dev/null; then
+    conda activate "${GRAIL_SONIC_ENV:-sonic}"
+else
+    echo ">>> [skip conda] using active Python: $(python -c 'import sys; print(sys.executable)')"
+fi
 
 # GMR opens a mujoco viewer — ensure DISPLAY is set for headless runs.
 export DISPLAY="${DISPLAY:-:1}"

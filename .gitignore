@@ -261,6 +261,10 @@ wandb/
 logs_rl/
 CLAUDE.md
 CLAUDE_*.mdly/
+results/generation/videos_kling/
 results/generation/foundation_pose_output_musa/
 results/generation/4dhoi_recon_smplx_musa/
 results/generation/4dhoi_recon_smplx_musa_valid/
+results/generation/4dhoi_recon_cache_musa/
+results/generation/hmr_smplx_cache_musa/
+results/generation/hmr_smplx_musa/

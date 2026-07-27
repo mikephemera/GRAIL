@@ -13,7 +13,8 @@ The pipeline:
   2. Run GMR's IK + temporal smoothing through `grail.adapters.gmr` (which
      applies GRAIL-specific monkey-patches to the public GMR package at
      import time).
-  3. Compose per-motion object USDs from the source meshes + tracked poses.
+  3. Compose per-motion object USDs from the source meshes + tracked poses
+     with a MuJoCo/mjlab-friendly USD writer.
 
 Driven from `grail/retargeting/scripts/retarget.sh` /
 `grail/retargeting/scripts/retarget_pipeline.sh`. Full docs:
@@ -47,7 +48,6 @@ from grail.adapters.gmr import (
     draw_frame,
 )
 from grail.models.g1_smplx_model import G1ProportionSMPLX
-from grail.retargeting.convert_collision_to_sdf import convert_to_sdf
 import joblib
 import mujoco as mj
 import mujoco.viewer as mjv
@@ -90,6 +90,43 @@ def _pickle_load_compat(file_path):
             _install_numpy_pickle_aliases()
             f.seek(0)
             return pickle.load(f)
+
+
+def _resolve_hoi_mesh_file(file_path) -> Path:
+    file_path = Path(file_path).resolve()
+    candidates = [
+        file_path.parent.parent / "mesh_data" / "model.obj",
+        file_path.parent / "mesh_data" / "model.obj",
+    ]
+
+    generation_root = None
+    for parent in file_path.parents:
+        if parent.name == "generation" and parent.parent.name == "results":
+            generation_root = parent
+            break
+
+    if generation_root is not None:
+        rel_parts = file_path.relative_to(generation_root).parts
+        if len(rel_parts) >= 3:
+            dataset_name = rel_parts[1]
+            object_name = rel_parts[2]
+            candidates.append(generation_root / "mesh" / dataset_name / object_name / "model.obj")
+
+    seen = set()
+    deduped_candidates = []
+    for candidate in candidates:
+        if candidate not in seen:
+            deduped_candidates.append(candidate)
+            seen.add(candidate)
+
+    for idx, candidate in enumerate(deduped_candidates):
+        if candidate.exists():
+            if idx > 0:
+                print(f"  Using fallback object mesh: {candidate}")
+            return candidate
+
+    searched = "\n    ".join(str(candidate) for candidate in deduped_candidates)
+    raise FileNotFoundError(f"Object mesh model.obj not found. Searched:\n    {searched}")
 
 
 def add_mesh(spec, mesh, name):
@@ -173,7 +210,7 @@ def _apply_downstairs_initial_height_correction(
         print("  WARNING: downstairs correction skipped because object mesh has no triangles")
         return 0.0
 
-    rot = R.from_quat(object_rot_quats[0], scalar_first=True)
+    rot = _rotation_from_quat_wxyz(object_rot_quats[0])
     world_vertices = rot.apply(vertices) + object_transl[0]
 
     data = retarget.configuration.data
@@ -327,7 +364,7 @@ class ModifiedRobotMotionViewer(RobotMotionViewer):
             for human_body_name, (pos, rot) in human_motion_data.items():
                 draw_frame(
                     pos,
-                    R.from_quat(rot, scalar_first=True).as_matrix(),
+                    _rotation_from_quat_wxyz(rot).as_matrix(),
                     self.viewer,
                     human_point_scale,
                     pos_offset=human_pos_offset,
@@ -356,6 +393,15 @@ space_was_pressed = False
 _listener_started = False
 
 np.set_printoptions(precision=3, suppress=True)
+
+
+def _rotation_from_quat_wxyz(quat):
+    quat_xyzw = np.asarray(quat)[..., [1, 2, 3, 0]]
+    return R.from_quat(quat_xyzw)
+
+
+def _quat_wxyz_from_rotation(rot):
+    return rot.as_quat()[..., [3, 0, 1, 2]]
 
 
 def on_press(key):
@@ -530,7 +576,7 @@ def load_hoi_sequence(
     smplx_output = forward_smplx(smplx_model, tensor_to(smplx_poses), return_mesh=return_mesh)
 
     object_transl = hoi_data["obj_data"]["obj_t"]
-    object_rot_quats = R.from_matrix(hoi_data["obj_data"]["obj_R"]).as_quat(scalar_first=True)
+    object_rot_quats = _quat_wxyz_from_rotation(R.from_matrix(hoi_data["obj_data"]["obj_R"]))
     joint_names = JOINT_NAMES[: len(smplx_model.parents)]
     parents = smplx_model.parents
     global_orient = smplx_output.global_orient.detach().cpu().numpy()
@@ -555,7 +601,7 @@ def load_hoi_sequence(
                     single_full_body_pose[i].squeeze()
                 )
             joint_orientations.append(rot)
-            result[joint_name] = (single_joints[i], rot.as_quat(scalar_first=True))
+            result[joint_name] = (single_joints[i], _quat_wxyz_from_rotation(rot))
 
         smplx_data_frames.append(result)
 
@@ -564,7 +610,7 @@ def load_hoi_sequence(
     height_scale *= scene_scale
     print(f"height_scale: {height_scale}")
 
-    mesh_file = Path(file_path).parent.parent / "mesh_data" / "model.obj"
+    mesh_file = _resolve_hoi_mesh_file(file_path)
 
     object_mesh = trimesh.load(mesh_file)
     if isinstance(object_mesh, trimesh.Scene):
@@ -737,13 +783,13 @@ def load_grab_sequence(
     parents = sbj_m.parents
 
     object_data = seq_data["object"]
-    object_rot_quats = R.from_rotvec(-object_data["params"]["global_orient"]).as_quat(
-        scalar_first=True
+    object_rot_quats = _quat_wxyz_from_rotation(
+        R.from_rotvec(-object_data["params"]["global_orient"])
     )
     object_transl = object_data["params"]["transl"]
 
-    table_rot_quats = R.from_rotvec(-seq_data["table"]["params"]["global_orient"]).as_quat(
-        scalar_first=True
+    table_rot_quats = _quat_wxyz_from_rotation(
+        R.from_rotvec(-seq_data["table"]["params"]["global_orient"])
     )
     table_transl = seq_data["table"]["params"]["transl"]
 
@@ -762,7 +808,7 @@ def load_grab_sequence(
                     single_full_body_pose[i].squeeze()
                 )
             joint_orientations.append(rot)
-            result[joint_name] = (single_joints[i], rot.as_quat(scalar_first=True))
+            result[joint_name] = (single_joints[i], _quat_wxyz_from_rotation(rot))
 
         smplx_data_frames.append(result)
 
@@ -1043,45 +1089,6 @@ def fixup_texture_paths(usd_path: Path, seq_name: str) -> None:
         stage.GetRootLayer().Save()
 
 
-def ensure_physics_schemas(usd_path: Path, mass: float = 1.0) -> None:
-    """Apply RigidBodyAPI / MassAPI / CollisionAPI if `convert_mesh.py` skipped them.
-
-    IsaacLab's MeshConverter sometimes raises mid-conversion (after writing the
-    Xform wrapper but before applying physics schemas). Kit swallows the exit
-    code so retarget.py can't detect failure via subprocess. We re-apply the
-    expected schemas here as a no-op-on-success fix-up.
-    """
-    from pxr import Usd, UsdPhysics, UsdGeom
-
-    stage = Usd.Stage.Open(str(usd_path))
-    root = stage.GetDefaultPrim()
-    if not root:
-        return
-
-    modified = False
-    applied = set(root.GetAppliedSchemas())
-    if "PhysicsRigidBodyAPI" not in applied:
-        UsdPhysics.RigidBodyAPI.Apply(root)
-        modified = True
-    if "PhysicsMassAPI" not in applied:
-        mass_api = UsdPhysics.MassAPI.Apply(root)
-        mass_api.CreateMassAttr().Set(mass)
-        modified = True
-
-    for prim in stage.Traverse():
-        if prim.GetTypeName() == "Mesh":
-            mesh_applied = set(prim.GetAppliedSchemas())
-            if "PhysicsCollisionAPI" not in mesh_applied:
-                UsdPhysics.CollisionAPI.Apply(prim)
-                modified = True
-            if "PhysicsMeshCollisionAPI" not in mesh_applied:
-                UsdPhysics.MeshCollisionAPI.Apply(prim)
-                modified = True
-
-    if modified:
-        stage.GetRootLayer().Save()
-
-
 def retarget_single_sequence(
     file_path,
     robot,
@@ -1153,10 +1160,10 @@ def retarget_single_sequence(
             for joint_name in result["smplx_data_frames"][frame].keys():
                 if joint_name == "pelvis":
                     pos, quat = result["smplx_data_frames"][frame][joint_name]
-                    existing_rot = R.from_quat(quat, scalar_first=True)
+                    existing_rot = _rotation_from_quat_wxyz(quat)
                     result["smplx_data_frames"][frame][joint_name] = (
                         pos,
-                        (existing_rot * extra_rot).as_quat(scalar_first=True),
+                        _quat_wxyz_from_rotation(existing_rot * extra_rot),
                     )
 
     if visualize_smpl:
@@ -1180,9 +1187,7 @@ def retarget_single_sequence(
         obj_name = [x for x in result["obj_data"].keys() if x != "table"][0]
         object_mesh = result["obj_data"][obj_name]["mesh"]
 
-        rot_mats = R.from_quat(
-            result["obj_data"][obj_name]["rot_quats"], scalar_first=True
-        ).as_matrix()
+        rot_mats = _rotation_from_quat_wxyz(result["obj_data"][obj_name]["rot_quats"]).as_matrix()
         object_vertices = (
             np.matmul(object_mesh.vertices, rot_mats.transpose(0, 2, 1))
             + result["obj_data"][obj_name]["transl"][:, None]
@@ -1331,7 +1336,7 @@ def retarget_single_sequence(
             retarget.configuration.data.qpos[i + 7] = init_config[name]
 
     qpos = retarget.configuration.data.qpos.copy()
-    root_rot = R.from_quat(qpos[3:7]).as_rotvec()
+    root_rot = _rotation_from_quat_wxyz(qpos[3:7]).as_rotvec()
 
     pbar = tqdm(total=len(smplx_data_frames))
     i = 0
@@ -1405,7 +1410,7 @@ def retarget_single_sequence(
                 )
                 all_joint_positions_mean = np.mean(all_joint_positions, axis=0)
 
-                rotation = R.from_matrix(rotmat).as_quat(scalar_first=True)
+                rotation = _quat_wxyz_from_rotation(R.from_matrix(rotmat))
                 frames[f"{hand}_wrist"] = (all_joint_positions_mean - x_axis * 0.1, rotation)
 
             retarget.configuration.data.qpos[:3] = transl[frame]
@@ -1582,7 +1587,8 @@ def retarget_single_sequence(
         copy_mesh_file(mesh_dir, obj_name, seq_name, output_dir_mesh)
     else:
 
-        # convert object mesh to USD (with texture uniquification to avoid collisions)
+        # Convert the object mesh to USD. The converter bakes a MuJoCo/mjlab-
+        # friendly material network and keeps texture paths local to the USD.
         object_mesh_path = Path(result["obj_data"][object_name]["file_path"])
         output_usd_path = str(Path(output_dir_mesh) / f"{seq_name}.usd")
 
@@ -1593,29 +1599,13 @@ def retarget_single_sequence(
                 os.path.join(os.path.dirname(__file__), "convert_mesh.py"),
                 str(patched_obj),
                 str(output_usd_path),
-                "--headless",
-                "--mass",
-                "1.0",
                 "--scale",
                 str(mesh_scale),
-                "--collision-approximation",
-                "meshSimplification",
             ]
             subprocess.run(cmd, check=True)
 
-        # Convert collision approximation to SDF mesh
-        convert_to_sdf(Path(output_usd_path))
-        # Fix texture paths to be relative (portable across machines)
+        # Fix texture paths to be relative (portable across machines).
         fixup_texture_paths(Path(output_usd_path), seq_name)
-        # Verify + repair physics schemas. IsaacLab's MeshConverter can raise
-        # `RuntimeError: Accessed invalid null prim` mid-conversion for some
-        # OBJs whose intermediate USD's defaultPrim doesn't compose cleanly
-        # with the /<basename>/geometry wrapper. The error is swallowed (Kit
-        # eats the non-zero exit code), so subprocess.run(check=True) returns
-        # success but the USD is missing RigidBodyAPI / MassAPI / CollisionAPI.
-        # This trips up IsaacLab downstream with "no contact sensors / no
-        # rigid bodies". Detect and apply the missing schemas here.
-        ensure_physics_schemas(Path(output_usd_path), mass=1.0)
 
 
 def run_main(
@@ -1688,8 +1678,12 @@ def run_main(
             for pattern in [
                 os.path.join(data_dir, "generation/4dhoi_recon_valid/*/*/hoi_data/hoi_data.pkl"),
                 os.path.join(data_dir, "generation/4dhoi_recon_valid/*/*/*/hoi_data/hoi_data.pkl"),
+                os.path.join(data_dir, "generation/4dhoi_recon_valid/*/*/hoi_data.pkl"),
+                os.path.join(data_dir, "generation/4dhoi_recon_valid/*/*/*/hoi_data.pkl"),
                 os.path.join(data_dir, "*/*/hoi_data/hoi_data.pkl"),
                 os.path.join(data_dir, "*/*/*/hoi_data/hoi_data.pkl"),
+                os.path.join(data_dir, "*/*/hoi_data.pkl"),
+                os.path.join(data_dir, "*/*/*/hoi_data.pkl"),
             ]:
                 files = glob.glob(pattern)
                 if files:

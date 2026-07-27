@@ -4,13 +4,15 @@
 # Usage:
 #   bash scripts/setup/install_env_sonic.sh              # default env 'sonic'
 #   GRAIL_SONIC_ENV=my_sonic_env bash scripts/setup/install_env_sonic.sh
-#   BOOTSTRAP_SONIC=0 bash scripts/setup/install_env_sonic.sh         # skip Isaac Sim/Lab
-#                                                                      (assume already installed)
+#   BOOTSTRAP_SONIC=0 bash scripts/setup/install_env_sonic.sh         # retarget-only / mjlab
+#                                                                      (skip Isaac Sim/Lab)
+#   GRAIL_GMR_DIR=/workspace/GMR_musa bash scripts/setup/install_env_sonic.sh
+#   RETARGET_ONLY=0 BOOTSTRAP_SONIC=0 bash scripts/setup/install_env_sonic.sh # existing sonic env
 #   INSTALL_SYSTEM_DEPS=0 bash scripts/setup/install_env_sonic.sh      # skip apt step
 #   PULL_LFS=0 bash scripts/setup/install_env_sonic.sh                 # skip git-lfs pull
 #
 # What this script does, in order:
-#   -1. (INSTALL_SYSTEM_DEPS=1 — default when apt+sudo/root are available)
+#   -1. (INSTALL_SYSTEM_DEPS=1 — default for full SONIC, 0 for retarget-only)
 #       Install vulkan/GUI libs + git-lfs via apt. Uses sudo if needed;
 #       no-op if we're neither root nor have sudo.
 #   0. (BOOTSTRAP_SONIC=1 — default) Create the conda env with Python 3.11,
@@ -18,14 +20,18 @@
 #      Lab v2.3.2 to $ISAAC_LAB_DIR (default: ~/IsaacLab), run
 #      `./isaaclab.sh --install all`, pip install the core `isaaclab`
 #      editable, and install `vector_quantize_pytorch`. Set BOOTSTRAP_SONIC=0
-#      to skip when you already have an env with IsaacLab/IsaacSim installed
-#      (e.g. gearenv).
-#   1. Applies NVIDIA GMR overrides from grail/retargeting/gmr_overrides/
-#      on top of the public YanjieZe/GMR submodule (idempotent — safe to rerun).
-#   2. Symlinks data/motion_lib_genhoi + models into imports/SONIC/gear_sonic/.
-#   3. pip install -e imports/GMR + imports/SONIC/gear_sonic[training]
-#      + GRAIL package (editable) + huggingface_hub.
-#   4. pip install retargeting-specific deps (smplx, mujoco, pxr, trimesh, ...).
+#      for a MUSA/MuJoCo-only stageD retarget runtime; this defaults to
+#      RETARGET_ONLY=1 unless overridden.
+#   1. Resolves a GMR checkout from either `imports/GMR` or `GRAIL_GMR_DIR`
+#      (for a fork such as `/workspace/GMR_musa`), then applies NVIDIA GMR
+#      overrides from grail/retargeting/gmr_overrides/ on top of it.
+#   2. Full SONIC only: symlinks data/motion_lib_genhoi + models into
+#      imports/SONIC/gear_sonic/.
+#   3. pip install -e ${GMR_DIR} + GRAIL package (editable). Retarget-only
+#      installs GMR with --no-deps and lets the retargeting dependency block
+#      below provide PyPI runtime deps. Full SONIC also installs
+#      imports/SONIC/gear_sonic[training] + huggingface_hub.
+#   4. pip install retargeting-specific deps (mujoco, pxr, trimesh, ...).
 #   5. Sanity-imports the top-level modules.
 #   6. (PULL_LFS=1 — default when git-lfs is on PATH) git-lfs pull on
 #      imports/SONIC so the robot mesh STLs + policy ONNX materialize.
@@ -34,18 +40,38 @@ set -eo pipefail
 
 ENV_NAME="${GRAIL_SONIC_ENV:-sonic}"
 REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
-GMR_DIR="${REPO_ROOT}/imports/GMR"
 OVERRIDES="${REPO_ROOT}/grail/retargeting/gmr_overrides"
 BOOTSTRAP_SONIC="${BOOTSTRAP_SONIC:-1}"
-INSTALL_SYSTEM_DEPS="${INSTALL_SYSTEM_DEPS:-1}"
-PULL_LFS="${PULL_LFS:-1}"
+if [[ -z "${RETARGET_ONLY+x}" ]]; then
+    if [[ "${BOOTSTRAP_SONIC}" == "0" ]]; then
+        RETARGET_ONLY=1
+    else
+        RETARGET_ONLY=0
+    fi
+fi
+if [[ -z "${INSTALL_SYSTEM_DEPS+x}" ]]; then
+    if [[ "${RETARGET_ONLY}" == "1" ]]; then
+        INSTALL_SYSTEM_DEPS=0
+    else
+        INSTALL_SYSTEM_DEPS=1
+    fi
+fi
+if [[ -z "${PULL_LFS+x}" ]]; then
+    if [[ "${RETARGET_ONLY}" == "1" ]]; then
+        PULL_LFS=0
+    else
+        PULL_LFS=1
+    fi
+fi
 ISAAC_LAB_DIR="${ISAAC_LAB_DIR:-$HOME/IsaacLab}"
 ISAAC_SIM_VERSION="${ISAAC_SIM_VERSION:-5.1.0}"
 ISAAC_LAB_TAG="${ISAAC_LAB_TAG:-v2.3.2}"
 
 echo ">>> Target conda env: ${ENV_NAME}"
 echo ">>> Repo root:        ${REPO_ROOT}"
-echo ">>> Bootstrap mode:   ${BOOTSTRAP_SONIC} (1=install Isaac Sim/Lab, 0=assume present)"
+echo ">>> Bootstrap mode:   ${BOOTSTRAP_SONIC} (1=install Isaac Sim/Lab, 0=retarget-only)"
+echo ">>> Retarget-only:    ${RETARGET_ONLY} (1=skip SONIC training deps)"
+echo ">>> System deps:      ${INSTALL_SYSTEM_DEPS} (1=apt install, 0=skip apt)"
 
 # --- Step -1: system deps (Vulkan/GUI/git-lfs) via apt ------------------
 # Idempotent: re-installs are a fast pass. Skipped entirely on non-apt
@@ -73,10 +99,32 @@ if [[ "${INSTALL_SYSTEM_DEPS}" == "1" ]] && command -v apt-get &>/dev/null; then
     fi
 fi
 
-# --- Step 0: bootstrap the env + Isaac Sim + Isaac Lab ------------------
-eval "$(conda shell.bash hook)"
+# --- Step 0: bootstrap or select Python env -----------------------------
+if command -v conda &>/dev/null; then
+    eval "$(conda shell.bash hook)"
+else
+    CONDA_CANDIDATES=(
+        "/root/miniconda3/etc/profile.d/conda.sh"
+        "/root/anaconda3/etc/profile.d/conda.sh"
+        "/opt/conda/etc/profile.d/conda.sh"
+    )
+    for conda_sh in "${CONDA_CANDIDATES[@]}"; do
+        if [[ -f "${conda_sh}" ]]; then
+            # shellcheck disable=SC1090
+            source "${conda_sh}"
+            break
+        fi
+    done
+fi
 
-if [[ "${BOOTSTRAP_SONIC}" == "1" ]]; then
+if ! command -v conda &>/dev/null; then
+    if [[ "${RETARGET_ONLY}" == "1" ]]; then
+        echo ">>> [skip conda] conda not found; installing into active Python: $(python -c 'import sys; print(sys.executable)')"
+    else
+        echo "ERROR: conda not found; full SONIC setup requires conda." >&2
+        exit 1
+    fi
+elif [[ "${BOOTSTRAP_SONIC}" == "1" ]]; then
     if ! conda env list | awk '{print $1}' | grep -qx "${ENV_NAME}"; then
         echo ">>> Creating conda env '${ENV_NAME}' with Python 3.11"
         conda create -y -n "${ENV_NAME}" python=3.11
@@ -129,18 +177,32 @@ if [[ "${BOOTSTRAP_SONIC}" == "1" ]]; then
     pip install vector_quantize_pytorch
 else
     if ! conda env list | awk '{print $1}' | grep -qx "${ENV_NAME}"; then
-        echo "ERROR: conda env '${ENV_NAME}' does not exist and BOOTSTRAP_SONIC=0." >&2
-        echo "       Either unset BOOTSTRAP_SONIC (default bootstrap) or create the env first." >&2
-        exit 1
+        if [[ "${RETARGET_ONLY}" == "1" ]]; then
+            echo ">>> Creating retarget-only conda env '${ENV_NAME}' with Python 3.11"
+            conda create -y -n "${ENV_NAME}" python=3.11
+        else
+            echo "ERROR: conda env '${ENV_NAME}' does not exist and BOOTSTRAP_SONIC=0." >&2
+            echo "       Either unset BOOTSTRAP_SONIC (default bootstrap) or create the env first." >&2
+            exit 1
+        fi
     fi
     conda activate "${ENV_NAME}"
 fi
 
+DEFAULT_GMR_DIR="${REPO_ROOT}/imports/GMR"
+EXTERNAL_GMR_DIR="$(cd "${REPO_ROOT}/.." && pwd)/GMR_musa"
+GMR_DIR="${GRAIL_GMR_DIR:-${DEFAULT_GMR_DIR}}"
 if [[ ! -d "${GMR_DIR}/general_motion_retargeting" ]]; then
-    echo "ERROR: ${GMR_DIR} is empty." >&2
-    echo "       Run: git submodule update --init imports/GMR" >&2
+    if [[ -z "${GRAIL_GMR_DIR:-}" ]] && [[ -d "${EXTERNAL_GMR_DIR}/general_motion_retargeting" ]]; then
+        GMR_DIR="${EXTERNAL_GMR_DIR}"
+    fi
+fi
+if [[ ! -d "${GMR_DIR}/general_motion_retargeting" ]]; then
+    echo "ERROR: no GMR checkout found." >&2
+    echo "       Expected ${DEFAULT_GMR_DIR} or set GRAIL_GMR_DIR=/path/to/GMR_fork" >&2
     exit 1
 fi
+echo ">>> GMR checkout:    ${GMR_DIR}"
 
 # --- Step 1: apply NVIDIA GMR overrides ---------------------------------
 # GRAIL's GMR customizations are applied at runtime via grail/adapters/gmr.py
@@ -154,59 +216,83 @@ else
     echo ">>> [skip] No gmr_overrides/ directory — using runtime adapter patches instead"
 fi
 
-# --- Step 2: surface data/ and models/ into the SONIC submodule ---------
-# imports/SONIC/gear_sonic/ is the cwd for training scripts; it expects
-# data/motion_lib_genhoi/... and models/... to resolve from there.
 GEAR_SONIC="${REPO_ROOT}/imports/SONIC/gear_sonic"
-mkdir -p "${REPO_ROOT}/data/motion_lib_genhoi" "${REPO_ROOT}/models"
-ln -sfn ../../../../data/motion_lib_genhoi "${GEAR_SONIC}/data/motion_lib_genhoi"
-ln -sfn ../../../models "${GEAR_SONIC}/models"
-echo ">>> Linked ${GEAR_SONIC}/{data/motion_lib_genhoi,models} -> repo root"
+if [[ "${RETARGET_ONLY}" != "1" ]]; then
+    # --- Step 2: surface data/ and models/ into the SONIC submodule -----
+    # imports/SONIC/gear_sonic/ is the cwd for training scripts; it expects
+    # data/motion_lib_genhoi/... and models/... to resolve from there.
+    mkdir -p "${REPO_ROOT}/data/motion_lib_genhoi" "${REPO_ROOT}/models"
+    ln -sfn ../../../../data/motion_lib_genhoi "${GEAR_SONIC}/data/motion_lib_genhoi"
+    ln -sfn ../../../models "${GEAR_SONIC}/models"
+    echo ">>> Linked ${GEAR_SONIC}/{data/motion_lib_genhoi,models} -> repo root"
+else
+    echo ">>> [skip] SONIC data/model symlinks (retarget-only)"
+fi
 
 # --- Step 3: editable installs ------------------------------------------
-echo ">>> pip install -e imports/GMR"
-pip install -e "${GMR_DIR}"
+if [[ "${RETARGET_ONLY}" == "1" ]]; then
+    echo ">>> pip install --no-deps -e ${GMR_DIR} (retarget-only)"
+    pip install --no-deps -e "${GMR_DIR}"
+else
+    echo ">>> pip install -e ${GMR_DIR}"
+    pip install -e "${GMR_DIR}"
+fi
 
-echo ">>> pip install -e imports/SONIC/gear_sonic[training] + huggingface_hub"
-pip install -e "${GEAR_SONIC}[training]"
-pip install huggingface_hub
+if [[ "${RETARGET_ONLY}" != "1" ]]; then
+    echo ">>> pip install -e imports/SONIC/gear_sonic[training] + huggingface_hub"
+    pip install -e "${GEAR_SONIC}[training]"
+    pip install huggingface_hub
+else
+    echo ">>> [skip] imports/SONIC/gear_sonic[training] (retarget-only)"
+fi
 
 echo ">>> pip install -e . (grail, --no-deps)"
 # --no-deps: grail's setup.cfg has unpinned numpy/opencv-python, which resolve
 # to numpy 2.x + opencv 4.13 and break gear_sonic (numpy==1.26.4), isaaclab-rl
 # (numpy<2), and isaacsim-kernel (numpy==1.26.0). The sonic env only consumes
-# grail.retargeting; its real deps (smplx, scipy, mujoco, mink, trimesh, pxr,
-# isaaclab, gmr) are installed by other steps in this script.
+# grail.retargeting; its real deps are installed by GMR and the retargeting
+# dependency block below.
 pip install --no-deps -e "${REPO_ROOT}"
 
 # --- Step 4: retargeting-specific deps ----------------------------------
 echo ">>> pip install retargeting deps"
-pip install \
-    'smplx @ git+https://github.com/vchoutas/smplx' \
-    joblib \
-    trimesh \
-    usd-core \
-    scipy \
-    rich \
-    tqdm \
-    mujoco \
-    mink \
-    'qpsolvers[proxqp]' \
-    'simple-raycaster @ git+https://github.com/Agent-3154/simple-raycaster.git@197daa6dcb146c5ce3e675a173328e17df6b9777'
+RETARGET_DEPS=(
+    'numpy<2'
+    loop_rate_limiters
+    joblib
+    mink
+    mujoco
+    natsort
+    'opencv-python<4.12'
+    psutil
+    protobuf
+    'qpsolvers[proxqp]'
+    'redis[hiredis]'
+    'imageio[ffmpeg]'
+    smplx
+    trimesh
+    usd-core
+    scipy
+    rich
+    tqdm
+)
+if [[ "${RETARGET_ONLY}" != "1" ]]; then
+    RETARGET_DEPS+=(
+        'simple-raycaster @ git+https://github.com/Agent-3154/simple-raycaster.git@197daa6dcb146c5ce3e675a173328e17df6b9777'
+    )
+fi
+pip install "${RETARGET_DEPS[@]}"
 
-# --- Step 4b: SONIC training/eval-callback deps -------------------------
-# smpl_sim is a non-PyPI package providing compute_metrics_lite, used by the
-# SONIC eval-watcher's im_eval callback (gear_sonic/trl/callbacks/im_eval_callback.py).
-# Without it, eval `python eval_agent_trl.py` crashes at metrics computation
-# and no rendered videos get uploaded to wandb.
-#
-# Sourced from ZhengyiLuo's SMPLSim repo. Its non-trivial deps (numpy-stl, vtk,
-# easydict, gymnasium, mediapy, torchgeometry) aren't pulled in by
-# pip-from-git automatically because the package's setup.py doesn't always
-# install_requires them — list them explicitly.
-pip install \
-    numpy-stl easydict gymnasium mediapy torchgeometry vtk \
-    'smpl_sim @ git+https://github.com/ZhengyiLuo/SMPLSim.git'
+if [[ "${RETARGET_ONLY}" != "1" ]]; then
+    # --- Step 4b: SONIC training/eval-callback deps ---------------------
+    # smpl_sim is a non-PyPI package providing compute_metrics_lite, used by
+    # the SONIC eval-watcher's im_eval callback.
+    pip install \
+        numpy-stl easydict gymnasium mediapy torchgeometry vtk \
+        'smpl_sim @ git+https://github.com/ZhengyiLuo/SMPLSim.git'
+else
+    echo ">>> [skip] SONIC training/eval deps (retarget-only)"
+fi
 
 # --- Step 6: git-lfs pull for SONIC assets ------------------------------
 # Mesh STLs + policy ONNX files are LFS-tracked. Without this pull, the
@@ -234,13 +320,15 @@ echo ">>> Verifying install"
 python -c "import general_motion_retargeting as gmr; print(f'  GMR: {gmr.__file__}')"
 python -c "from grail.retargeting.retarget import main; print('  grail.retargeting.retarget: OK')"
 python -c "import smplx, mujoco; print('  smplx, mujoco: OK')"
-if [[ "${BOOTSTRAP_SONIC}" == "1" ]]; then
+if [[ "${RETARGET_ONLY}" != "1" && "${BOOTSTRAP_SONIC}" == "1" ]]; then
     OMNI_KIT_ACCEPT_EULA=Yes python -c "import isaaclab, isaacsim; print('  isaaclab + isaacsim: OK')"
 fi
 
 echo ""
 echo "Setup complete. Quick start:"
 echo "  bash grail/retargeting/scripts/retarget_pipeline.sh <data_dir> <output_folder>"
-echo ""
-echo "Full preflight:"
-echo "  OMNI_KIT_ACCEPT_EULA=Yes python imports/SONIC/check_environment.py --training"
+if [[ "${RETARGET_ONLY}" != "1" ]]; then
+    echo ""
+    echo "Full preflight:"
+    echo "  OMNI_KIT_ACCEPT_EULA=Yes python imports/SONIC/check_environment.py --training"
+fi

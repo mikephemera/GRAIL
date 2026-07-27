@@ -1,6 +1,6 @@
 """Adapter for the public ``general_motion_retargeting`` (GMR) package.
 
-GRAIL's retargeting pipeline diverges from public GMR in two places. Rather
+GRAIL's retargeting pipeline diverges from public GMR in a few places. Rather
 than editing files inside the submodule (which forces ``imports/GMR`` to a
 "dirty" working tree and complicates submodule bumps), we monkey-patch the
 public package at import time. Importing this module is enough to activate
@@ -26,6 +26,11 @@ Patches applied:
    (a) truncates ``betas`` to the first 10 dims (public GMR keeps all 16),
    (b) zeroes out root translation before body-model evaluation. Public
    ``.npz`` callers see no change.
+
+3. ``GeneralMotionRetargeting`` quaternion handling — some public GMR releases
+   call SciPy's newer ``scalar_first=`` API. The stageD runtime can carry
+   SciPy 1.10, so the methods that consume GRAIL's ``[w, x, y, z]`` quaternions
+   reorder explicitly.
 """
 
 from __future__ import annotations
@@ -35,10 +40,21 @@ import pickle
 
 import general_motion_retargeting as _gmr
 import general_motion_retargeting.utils.smpl as _gmr_smpl
+import mink as _mink
 import numpy as np
+from scipy.spatial.transform import Rotation as _Rotation
 import torch
 
 _logger = logging.getLogger(__name__)
+
+
+def _rotation_from_quat_wxyz(quat):
+    quat_xyzw = np.asarray(quat)[..., [1, 2, 3, 0]]
+    return _Rotation.from_quat(quat_xyzw)
+
+
+def _quat_wxyz_from_rotation(rot):
+    return rot.as_quat()[..., [3, 0, 1, 2]]
 
 
 # ---------------------------------------------------------------------------
@@ -58,7 +74,69 @@ _gmr.GeneralMotionRetargeting.__init__ = _patched_gmr_init
 
 
 # ---------------------------------------------------------------------------
-# Patch 2: smpl.load_smplx_file — accept GRAIL .pkl + truncated betas.
+# Patch 2: SciPy 1.10-compatible quaternion handling in GMR's main IK path.
+# ---------------------------------------------------------------------------
+def _patched_setup_retarget_configuration(self):
+    self.configuration = _mink.Configuration(self.model)
+
+    self.tasks1 = []
+    self.tasks2 = []
+
+    for frame_name, entry in self.ik_match_table1.items():
+        body_name, pos_weight, rot_weight, pos_offset, rot_offset = entry
+        if pos_weight != 0 or rot_weight != 0:
+            task = _mink.FrameTask(
+                frame_name=frame_name,
+                frame_type="body",
+                position_cost=pos_weight,
+                orientation_cost=rot_weight,
+                lm_damping=1,
+            )
+            self.human_body_to_task1[body_name] = task
+            self.pos_offsets1[body_name] = np.array(pos_offset) - self.ground
+            self.rot_offsets1[body_name] = _rotation_from_quat_wxyz(rot_offset)
+            self.tasks1.append(task)
+            self.task_errors1[task] = []
+
+    for frame_name, entry in self.ik_match_table2.items():
+        body_name, pos_weight, rot_weight, pos_offset, rot_offset = entry
+        if pos_weight != 0 or rot_weight != 0:
+            task = _mink.FrameTask(
+                frame_name=frame_name,
+                frame_type="body",
+                position_cost=pos_weight,
+                orientation_cost=rot_weight,
+                lm_damping=1,
+            )
+            self.human_body_to_task2[body_name] = task
+            self.pos_offsets2[body_name] = np.array(pos_offset) - self.ground
+            self.rot_offsets2[body_name] = _rotation_from_quat_wxyz(rot_offset)
+            self.tasks2.append(task)
+            self.task_errors2[task] = []
+
+
+def _patched_offset_human_data(self, human_data, pos_offsets, rot_offsets):
+    offset_human_data = {}
+    for body_name in human_data.keys():
+        pos, quat = human_data[body_name]
+        offset_human_data[body_name] = [pos, quat]
+        updated_rot = _rotation_from_quat_wxyz(quat) * rot_offsets[body_name]
+        updated_quat = _quat_wxyz_from_rotation(updated_rot)
+        offset_human_data[body_name][1] = updated_quat
+
+        local_offset = pos_offsets[body_name]
+        global_pos_offset = _rotation_from_quat_wxyz(updated_quat).apply(local_offset)
+        offset_human_data[body_name][0] = pos + global_pos_offset
+
+    return offset_human_data
+
+
+_gmr.GeneralMotionRetargeting.setup_retarget_configuration = _patched_setup_retarget_configuration
+_gmr.GeneralMotionRetargeting.offset_human_data = _patched_offset_human_data
+
+
+# ---------------------------------------------------------------------------
+# Patch 3: smpl.load_smplx_file — accept GRAIL .pkl + truncated betas.
 # ---------------------------------------------------------------------------
 import smplx as _smplx  # noqa: E402  (imported here so the patch is self-contained)
 
@@ -126,7 +204,10 @@ def _grail_load_smplx_file(smplx_file, smplx_body_model_path):
 
 _gmr_smpl.load_smplx_file = _grail_load_smplx_file
 
-_logger.debug("Applied GRAIL GMR runtime patches (scale=1.0 + .pkl SMPL-X loader).")
+_logger.debug(
+    "Applied GRAIL GMR runtime patches "
+    "(scale=1.0 + SciPy 1.10 quaternions + .pkl SMPL-X loader)."
+)
 
 
 # ---------------------------------------------------------------------------

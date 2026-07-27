@@ -9,25 +9,39 @@ The retargeting pipeline is a standalone subpackage:
 
 ## Install
 
-1. Initialize the two submodules:
+1. Initialize the GMR checkout, or point the installer at your fork:
    ```bash
    git submodule update --init imports/GMR
+   # or:
+   export GRAIL_GMR_DIR=/workspace/GMR_musa
    ```
 
-2. Create a conda env with IsaacLab + IsaacSim + PyTorch (CUDA) following
-   {blob}`imports/SONIC/README.md`. The default env
-   name is `sonic`.
+2. Create or reuse a conda env. For stageD retarget-only, IsaacLab/IsaacSim
+   are not required; you only need the retargeting deps (MuJoCo, `usd-core`,
+   SMPL-X, and the GMR checkout). If you want the full sonic stack, follow
+   {blob}`imports/SONIC/README.md`. The default env name is `sonic`.
 
 3. Install the retargeting stack on top:
    ```bash
+   cd /workspace/GRAIL
    bash scripts/setup/install_env_sonic.sh
    ```
 
-   This applies GRAIL-specific {blob}`GMR overrides <grail/retargeting/gmr_overrides/README.md>`
-   on top of the public [YanjieZe/GMR](https://github.com/YanjieZe/GMR)
-   submodule, then pip-installs GMR, GRAIL, and retargeting Python deps
-   (`smplx`, `mujoco`, `usd-core`, …) into the active conda env. The script is
-   idempotent — rerun it any time the submodule pin is bumped.
+   This resolves the public [YanjieZe/GMR](https://github.com/YanjieZe/GMR)
+   submodule or your `GRAIL_GMR_DIR` fork, then pip-installs GMR, GRAIL, and
+   retargeting Python deps (`smplx`, `mujoco`, `usd-core`, ...) into the active
+   Python/conda env. GRAIL-specific GMR behavior is applied by
+   {src}`grail/adapters/gmr.py` at runtime. The script is idempotent — rerun
+   it any time the submodule pin or fork is updated.
+
+   For the stageD retarget-only path:
+   ```bash
+   BOOTSTRAP_SONIC=0 GRAIL_GMR_DIR=/workspace/GMR_musa bash scripts/setup/install_env_sonic.sh
+   ```
+   This defaults to `RETARGET_ONLY=1`, so it skips apt system packages,
+   IsaacLab/IsaacSim, SONIC training deps, SONIC LFS pulls, and GitHub-only
+   raycaster deps. If conda is not available, it installs into the active
+   Python.
 
    Override the env name via `GRAIL_SONIC_ENV=<name>`:
    ```bash
@@ -39,8 +53,8 @@ The retargeting pipeline is a standalone subpackage:
 ### End-to-end (recommended)
 
 ```bash
-conda activate sonic
-export DISPLAY=:1                    # GMR uses mujoco viewer, needs a display
+conda activate sonic                 # omit when installed into active Python
+export DISPLAY=:1                    # only needed when enabling a viewer
 
 bash grail/retargeting/scripts/retarget_pipeline.sh \
     data/genhoi/benchmark_v3/generation/4dhoi_recon_valid/Hunyuan \
@@ -53,7 +67,7 @@ Outputs under `data/motion_lib/benchmark_v3_0203/`:
 |------------|---------------------------------------------------|
 | `robot/`   | G1 joint trajectories (one pkl per motion)        |
 | `objects/` | Object 6-DOF trajectories                         |
-| `object_usd/` | IsaacLab-ready USD assets                      |
+| `object_usd/` | MuJoCo/mjlab-ready USD assets                  |
 | `meta/`    | Scene metadata (table pose, object name, …)       |
 
 Plus a preprocessed twin at `data/motion_lib/benchmark_v3_0203_ha/`:
@@ -123,8 +137,9 @@ preprocessing.
    via inverse kinematics. The retarget engine lives in
    {src}`imports/GMR` with NVIDIA overrides applied by the install
    script (see {blob}`override README <grail/retargeting/gmr_overrides/README.md>`).
-2. **Object mesh → USD** — `convert_mesh.py` runs IsaacLab's `MeshConverter`
-   headlessly to produce simulation-ready USD assets with convex-hull collision.
+2. **Object mesh → USD** — `convert_mesh.py` writes a pure Python USD stage
+   with texture bindings and local texture paths, suitable for MuJoCo /
+   mjlab consumers.
 3. **Hand-action + table geometry** — `process.py` derives hand open/close
    commands from object lift/contact timing and applies table geometry fixes.
    By default, the legacy right-hand pickup path zeroes the left arm and keeps
@@ -139,7 +154,7 @@ preprocessing.
 
 | Symptom                                          | Likely cause / fix                                                                                    |
 |--------------------------------------------------|-------------------------------------------------------------------------------------------------------|
-| `ModuleNotFoundError: general_motion_retargeting` | Rerun `bash scripts/setup/install_env_sonic.sh` — it installs GMR editable in the active env.         |
+| `ModuleNotFoundError: general_motion_retargeting` | Rerun `bash scripts/setup/install_env_sonic.sh` or set `GRAIL_GMR_DIR` to your fork; it installs GMR editable in the active env. |
 | `ModuleNotFoundError: pxr`                        | `pip install usd-core` (standalone PXR; Isaac Sim-vendored `pxr` is only importable inside kit apps). |
 | Black mujoco viewer / `glfwInit failed`           | `export DISPLAY=:1` **before** activating conda (it is an env var, not a conda setting).              |
 | Retarget skips motions as "no lift"              | `process.py` rejects motions where the object never rises 2 cm. Override with `--lift_threshold 0.01`. |
