@@ -578,6 +578,9 @@ def main():
         for step_num, skip_attr, step_fn in _STEPS:
             if not getattr(args, skip_attr):
                 step_fn(video_ids, args)
+                # Free GPU memory between steps to avoid OOM when steps
+                # load different large models (e.g. GEM-SMPL → SAM2/MoGe)
+                torch.cuda.empty_cache()
     except KeyboardInterrupt:
         print("\nInterrupted")
         success = False

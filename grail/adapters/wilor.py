@@ -309,21 +309,27 @@ def infer_hand_pose(video_path):
     cap = cv2.VideoCapture(video_path)
     outputs = []
     conf_thres = 0.5
-    while cap.isOpened():
-        ret, frame = cap.read()
-        if not ret:
-            break
+    try:
+        while cap.isOpened():
+            ret, frame = cap.read()
+            if not ret:
+                break
 
-        detections = pipe.hand_detector(frame, conf=conf_thres, verbose=False)[0]
-        bbox_confs = []
-        for det in detections:
-            bbox_conf = det.boxes.conf.cpu().detach().squeeze().item()
-            bbox_confs.append(bbox_conf)
+            detections = pipe.hand_detector(frame, conf=conf_thres, verbose=False)[0]
+            bbox_confs = []
+            for det in detections:
+                bbox_conf = det.boxes.conf.cpu().detach().squeeze().item()
+                bbox_confs.append(bbox_conf)
 
-        output = pipe.predict(frame, hand_conf=conf_thres)
+            output = pipe.predict(frame, hand_conf=conf_thres)
 
-        for i, out in enumerate(output):
-            output[i]["bbox_conf"] = bbox_confs[i]
-        outputs.append(output)
+            for i, out in enumerate(output):
+                output[i]["bbox_conf"] = bbox_confs[i]
+            outputs.append(output)
+    finally:
+        cap.release()
+        # Free GPU memory — WiLoR pipeline holds models in GPU memory
+        del pipe
+        torch.cuda.empty_cache()
 
     return outputs

@@ -119,6 +119,10 @@ def infer_human_pose(
         pred = detach_to_cpu(pred)
         print(f"[GEM-SOMA] Inference done ({time.time() - t0:.1f}s)")
 
+        # Free GPU memory — the model is large and not needed after prediction
+        del model
+        torch.cuda.empty_cache()
+
         # Remap to expected output format (CPU tensors)
         def _to_cpu(d):
             return {k: v.cpu() if isinstance(v, torch.Tensor) else v for k, v in d.items()}
