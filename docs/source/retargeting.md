@@ -65,7 +65,7 @@ Outputs under `data/motion_lib/benchmark_v3_0203/`:
 
 | Directory  | Contents                                          |
 |------------|---------------------------------------------------|
-| `robot/`   | G1 joint trajectories (one pkl per motion)        |
+| `robot/`   | G1 body trajectories plus `hand_dof_pos: (T, 14)` (one pkl per motion) |
 | `objects/` | Object 6-DOF trajectories                         |
 | `object_usd/` | MuJoCo/mjlab-ready USD assets                  |
 | `meta/`    | Scene metadata (table pose, object name, …)       |
@@ -134,7 +134,10 @@ preprocessing.
 ## How the pipeline works
 
 1. **GMR (General Motion Retargeting)** — SMPL-X body model → Unitree G1 MJCF
-   via inverse kinematics. The retarget engine lives in
+   via inverse kinematics. SMPL-X's 45-D pose for each hand is reduced to the
+   G1 Dex3 index/middle/thumb hinges and stored separately as
+   `hand_dof_pos: (T, 14)` in SONIC/Isaac articulation order, while `dof`
+   remains the backward-compatible 29-D body trajectory. The retarget engine lives in
    {src}`imports/GMR` with NVIDIA overrides applied by the install
    script (see {blob}`override README <grail/retargeting/gmr_overrides/README.md>`).
 2. **Object mesh → USD** — `convert_mesh.py` writes a pure Python USD stage

@@ -389,6 +389,52 @@ class ModifiedRobotMotionViewer(RobotMotionViewer):
 
 PAD_FRAMES = 10
 
+# Isaac/PhysX exposes the 14 Dex3 joints after the 29 G1 body joints in
+# articulation-tree order.  This is also the column order used by SONIC's
+# ``hand_dof_pos`` field and by the public GRAIL pickup motion library.
+G1_HAND_DOF_NAMES = (
+    "left_hand_index_0_joint",
+    "left_hand_middle_0_joint",
+    "left_hand_thumb_0_joint",
+    "right_hand_index_0_joint",
+    "right_hand_middle_0_joint",
+    "right_hand_thumb_0_joint",
+    "left_hand_index_1_joint",
+    "left_hand_middle_1_joint",
+    "left_hand_thumb_1_joint",
+    "right_hand_index_1_joint",
+    "right_hand_middle_1_joint",
+    "right_hand_thumb_1_joint",
+    "left_hand_thumb_2_joint",
+    "right_hand_thumb_2_joint",
+)
+
+G1_HAND_DOF_LIMITS = np.array(
+    [
+        [-1.5708, 0.0],
+        [-1.5708, 0.0],
+        [-1.0472, 1.0472],
+        [0.0, 1.5708],
+        [0.0, 1.5708],
+        [-1.0472, 1.0472],
+        [-1.74533, 0.0],
+        [-1.74533, 0.0],
+        [-0.724312, 1.0472],
+        [0.0, 1.74533],
+        [0.0, 1.74533],
+        [-1.0472, 0.724312],
+        [0.0, 1.74533],
+        [-1.74533, 0.0],
+    ],
+    dtype=np.float32,
+)
+
+_SMPLX_HAND_POSE_JOINT_INDEX = {
+    "index": (0, 1, 2),
+    "middle": (3, 4, 5),
+    "thumb": (12, 13, 14),
+}
+
 space_was_pressed = False
 _listener_started = False
 
@@ -402,6 +448,177 @@ def _rotation_from_quat_wxyz(quat):
 
 def _quat_wxyz_from_rotation(rot):
     return rot.as_quat()[..., [3, 0, 1, 2]]
+
+
+def _unit_vector(vector: np.ndarray, *, label: str) -> np.ndarray:
+    norm = float(np.linalg.norm(vector))
+    if norm < 1e-8:
+        raise ValueError(f"Cannot determine {label}: zero-length vector")
+    return vector / norm
+
+
+def _neutral_smplx_hand_flexion_axes(smplx_model, betas) -> dict[str, dict[str, np.ndarray]]:
+    """Return the one-DOF curl axes for the SMPL-X index/middle/thumb joints.
+
+    SMPL-X stores each hand joint as a three-axis local rotation, while Dex3
+    exposes one hinge per phalanx.  The hinge direction is derived from the
+    neutral SMPL-X geometry: it is perpendicular to both the neutral phalanx
+    and the palm normal.  Deriving it from geometry avoids hard-coding a raw
+    axis-angle component and remains valid for the G1-proportioned SMPL-X
+    template used by this pipeline.
+    """
+    zeros = np.zeros
+    neutral_motion = {
+        "poses": zeros((1, 165), dtype=np.float32),
+        "betas": _to_numpy_cpu(betas),
+        "trans": zeros((1, 3), dtype=np.float32),
+        "left_hand_pose": zeros((1, 45), dtype=np.float32),
+        "right_hand_pose": zeros((1, 45), dtype=np.float32),
+    }
+    neutral_output = forward_smplx(smplx_model, tensor_to(neutral_motion))
+    neutral_joints = neutral_output.joints[0].detach().cpu().numpy()
+    joint_index = {name: i for i, name in enumerate(JOINT_NAMES)}
+
+    axes: dict[str, dict[str, np.ndarray]] = {}
+    for side in ("left", "right"):
+        def point(name: str) -> np.ndarray:
+            return neutral_joints[joint_index[f"{side}_{name}"]]
+
+        lateral = point("index1") - point("ring1")
+        if side == "right":
+            lateral = -lateral
+        lateral = _unit_vector(lateral, label=f"{side} palm lateral axis")
+
+        palm_forward = (
+            np.mean(
+                [point("index1"), point("middle1"), point("ring1"), point("pinky1")],
+                axis=0,
+            )
+            - point("wrist")
+        )
+        palm_forward -= np.dot(palm_forward, lateral) * lateral
+        palm_forward = _unit_vector(palm_forward, label=f"{side} palm forward axis")
+        palm_normal = np.cross(lateral, palm_forward)
+
+        side_axes: dict[str, np.ndarray] = {}
+        for finger in _SMPLX_HAND_POSE_JOINT_INDEX:
+            finger_axes = []
+            for joint_number in (1, 2, 3):
+                start = point(f"{finger}{joint_number}")
+                end_name = finger if joint_number == 3 else f"{finger}{joint_number + 1}"
+                phalanx = _unit_vector(
+                    point(end_name) - start,
+                    label=f"{side} {finger}{joint_number} phalanx",
+                )
+                flexion_axis = _unit_vector(
+                    np.cross(phalanx, palm_normal),
+                    label=f"{side} {finger}{joint_number} flexion axis",
+                )
+                finger_axes.append(flexion_axis)
+            side_axes[finger] = np.stack(finger_axes)
+        axes[side] = side_axes
+    return axes
+
+
+def _to_numpy_cpu(value) -> np.ndarray:
+    if hasattr(value, "detach"):
+        value = value.detach()
+    if hasattr(value, "cpu"):
+        value = value.cpu()
+    return np.asarray(value)
+
+
+def _rotation_twist_angle(rotvec: np.ndarray, axis: np.ndarray) -> np.ndarray:
+    """Extract signed twist about ``axis`` from a batch of rotation vectors."""
+    quaternions = R.from_rotvec(rotvec.reshape(-1, 3)).as_quat()
+    projected_xyz = quaternions[:, :3] @ axis
+    angles = 2.0 * np.arctan2(projected_xyz, quaternions[:, 3])
+    return (angles + np.pi) % (2.0 * np.pi) - np.pi
+
+
+def retarget_smplx_hands_to_g1(
+    left_hand_pose,
+    right_hand_pose,
+    smplx_model,
+    betas,
+) -> np.ndarray:
+    """Retarget SMPL-X 15x3 hand rotations to G1 Dex3 ``(T, 14)`` DOFs.
+
+    Index and middle MCP rotations map to Dex3 joint 0.  SMPL-X PIP and DIP
+    curl are combined for Dex3 joint 1 because Dex3 has only two joints for
+    those fingers.  The three thumb curls map one-to-one.  Values are clipped
+    to the physical limits of GMR's 43-DOF G1/Dex3 model and returned in the
+    Isaac/SONIC articulation order declared by :data:`G1_HAND_DOF_NAMES`.
+    """
+    hand_pose = {
+        "left": _to_numpy_cpu(left_hand_pose),
+        "right": _to_numpy_cpu(right_hand_pose),
+    }
+    num_frames = hand_pose["left"].shape[0]
+    for side, pose in hand_pose.items():
+        if pose.size != num_frames * 45:
+            raise ValueError(
+                f"{side}_hand_pose must contain 45 values per frame; got shape {pose.shape}"
+            )
+        hand_pose[side] = pose.reshape(num_frames, 15, 3)
+    if hand_pose["right"].shape[0] != num_frames:
+        raise ValueError("left_hand_pose and right_hand_pose must have the same frame count")
+
+    axes = _neutral_smplx_hand_flexion_axes(smplx_model, betas)
+    side_dofs: dict[str, np.ndarray] = {}
+    for side in ("left", "right"):
+        curls: dict[str, list[np.ndarray]] = {}
+        for finger, pose_indices in _SMPLX_HAND_POSE_JOINT_INDEX.items():
+            curls[finger] = [
+                _rotation_twist_angle(
+                    hand_pose[side][:, pose_index],
+                    axes[side][finger][joint_index],
+                )
+                for joint_index, pose_index in enumerate(pose_indices)
+            ]
+
+        finger_sign = 1.0 if side == "left" else -1.0
+        thumb_sign = -1.0 if side == "left" else 1.0
+        side_dofs[side] = np.stack(
+            [
+                finger_sign * curls["index"][0],
+                finger_sign * (curls["index"][1] + curls["index"][2]),
+                finger_sign * curls["middle"][0],
+                finger_sign * (curls["middle"][1] + curls["middle"][2]),
+                thumb_sign * curls["thumb"][0],
+                thumb_sign * curls["thumb"][1],
+                thumb_sign * curls["thumb"][2],
+            ],
+            axis=1,
+        )
+
+    left = side_dofs["left"]
+    right = side_dofs["right"]
+    hand_dof_pos = np.stack(
+        [
+            left[:, 0],
+            left[:, 2],
+            left[:, 4],
+            right[:, 0],
+            right[:, 2],
+            right[:, 4],
+            left[:, 1],
+            left[:, 3],
+            left[:, 5],
+            right[:, 1],
+            right[:, 3],
+            right[:, 5],
+            left[:, 6],
+            right[:, 6],
+        ],
+        axis=1,
+    )
+    hand_dof_pos = np.clip(
+        hand_dof_pos,
+        G1_HAND_DOF_LIMITS[:, 0],
+        G1_HAND_DOF_LIMITS[:, 1],
+    )
+    return hand_dof_pos.astype(np.float32)
 
 
 def on_press(key):
@@ -574,6 +791,12 @@ def load_hoi_sequence(
     transl = smplx_poses["trans"][:, None]
 
     smplx_output = forward_smplx(smplx_model, tensor_to(smplx_poses), return_mesh=return_mesh)
+    hand_dof_pos = retarget_smplx_hands_to_g1(
+        smplx_poses["left_hand_pose"],
+        smplx_poses["right_hand_pose"],
+        smplx_model,
+        smplx_poses["betas"],
+    )
 
     object_transl = hoi_data["obj_data"]["obj_t"]
     object_rot_quats = _quat_wxyz_from_rotation(R.from_matrix(hoi_data["obj_data"]["obj_R"]))
@@ -643,6 +866,7 @@ def load_hoi_sequence(
     ret = {
         "smplx_data_frames": smplx_data_frames,
         "transl": smplx_poses["trans"] * height_scale,
+        "hand_dof_pos": hand_dof_pos,
         "obj_data": {
             "object": {
                 "mesh": object_mesh,
@@ -958,6 +1182,17 @@ def convert_gmr_data_to_motion_lib(gmr_data, output_pkl_path, mj_model, seq_name
         "smpl_joints": np.zeros((num_frames, 24, 3)).astype(np.float32),  # Placeholder
         "fps": fps,
     }
+
+    if "hand_dof_pos" in gmr_data:
+        hand_dof_pos = np.asarray(gmr_data["hand_dof_pos"], dtype=np.float32)
+        if hand_dof_pos.shape != (num_frames, len(G1_HAND_DOF_NAMES)):
+            raise ValueError(
+                "hand_dof_pos must have shape "
+                f"({num_frames}, {len(G1_HAND_DOF_NAMES)}); got {hand_dof_pos.shape}"
+            )
+        if not np.isfinite(hand_dof_pos).all():
+            raise ValueError("hand_dof_pos contains non-finite values")
+        entry_dict["hand_dof_pos"] = hand_dof_pos
 
     # Create motion_lib dictionary
     motion_lib_dict = {seq_name: entry_dict}
@@ -1507,6 +1742,13 @@ def retarget_single_sequence(
         "local_body_pos": None,
         "link_body_list": None,
     }
+    hand_dof_pos = np.asarray(result["hand_dof_pos"])[PAD_FRAMES:]
+    if hand_dof_pos.shape[0] != len(output_qpos_list):
+        raise ValueError(
+            "Hand/body frame count mismatch after removing padding: "
+            f"hands={hand_dof_pos.shape[0]}, body={len(output_qpos_list)}"
+        )
+    motion_data["hand_dof_pos"] = hand_dof_pos
 
     convert_gmr_data_to_motion_lib(motion_data, robot_output_file, retarget.model, seq_name)
 

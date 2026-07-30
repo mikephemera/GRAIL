@@ -803,7 +803,9 @@ def main():
         if include_contact_points:
             for hand in ("left_hand", "right_hand"):
                 key = f"contact_points_{hand}"
-                raw = object_motion[f][key]
+                raw = object_motion[f].get(key)
+                if raw is None:
+                    continue
                 if lift_frame is not None:
                     filtered = {k: copy.deepcopy(v) for k, v in raw.items() if k >= lift_frame}
                     processed_object_motions[f][key] = filtered
@@ -818,6 +820,8 @@ def main():
             "smpl_joints": robot_motion[f]["smpl_joints"],
             "fps": output_fps,
         }
+        if "hand_dof_pos" in robot_motion[f]:
+            processed_robot_motions[f]["hand_dof_pos"] = robot_motion[f]["hand_dof_pos"]
         if add_hand_actions:
             processed_robot_motions[f]["hand_action_left"] = hand_action_left
             processed_robot_motions[f]["hand_action_right"] = hand_action_right
