@@ -7,7 +7,6 @@ Wraps FoundationPose with optional cropping and frame interpolation.
 import glob
 import os
 import shutil
-import subprocess
 import sys
 
 import numpy as np
@@ -47,12 +46,10 @@ def interpolate_video(input_video_path, output_video_path, interpolation_factor=
     ]
 
     print(f"  Interpolating video {input_fps:.0f}fps → {target_fps:.0f}fps")
-    try:
-        subprocess.run(cmd, check=True, capture_output=True)
-        return True
-    except subprocess.CalledProcessError as e:
-        print(f"  FFmpeg interpolation failed: {e.stderr.decode() if e.stderr else e}")
-        return False
+    return run_subprocess(
+        cmd,
+        f"FFmpeg interpolation {input_fps:.0f}fps → {target_fps:.0f}fps",
+    )
 
 
 def _get_sample_indices(total, target):

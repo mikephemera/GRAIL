@@ -1,14 +1,11 @@
 import json
 import os
+import sys
+from pathlib import Path
 
 import numpy as np
 import smplx
 import torch
-from hmr4d.utils.body_model.smplx_lite import (
-    SmplxLite,
-    SmplxLiteCoco17,
-    SmplxLiteV437Coco17,
-)
 from pytorch3d.transforms import axis_angle_to_matrix, matrix_to_axis_angle
 
 from grail.models.smplx_constants import (
@@ -17,11 +14,47 @@ from grail.models.smplx_constants import (
 )
 
 
+def _load_smplxlite_classes():
+    """Import GEM-SMPL's lite body model without requiring an editable install.
+
+    Step 1 adds the GEM-SMPL checkout to ``sys.path`` in its subprocess, but
+    Step 4 is commonly run directly with cached HMR results.  In that case the
+    historical top-level import failed even though the checkout was present.
+    """
+    candidates = []
+    for value in (os.environ.get("HMR4D_PROJECT_ROOT"), os.environ.get("GENMO_ROOT")):
+        if value:
+            candidates.append(Path(value))
+    candidates.extend(
+        [
+            Path(__file__).resolve().parents[2] / "imports" / "GEM-SMPL",
+            Path("/workspace/GENMO_musa"),
+        ]
+    )
+    for root in candidates:
+        if (root / "hmr4d" / "utils" / "body_model" / "smplx_lite.py").is_file():
+            root = str(root)
+            if root not in sys.path:
+                sys.path.insert(0, root)
+            break
+    try:
+        from hmr4d.utils.body_model.smplx_lite import SmplxLiteCoco17
+    except ModuleNotFoundError as exc:
+        raise ModuleNotFoundError(
+            "GEM-SMPL/hmr4d is required for SMPL-X Step 4. "
+            "Set HMR4D_PROJECT_ROOT or install it from imports/GEM-SMPL."
+        ) from exc
+    return SmplxLiteCoco17
+
+
 def setup_smplxlite_coco17_model(model_path=None, device="cuda"):
+    SmplxLiteCoco17 = _load_smplxlite_classes()
     if model_path is None:
         smplxlite_coco17_model = SmplxLiteCoco17().to(device)
     else:
-        smplxlite_coco17_model = SmplxLiteCoco17(model_path, device=device)
+        # GEM-SMPL exposes this constructor as keyword-only; ``device`` is
+        # applied by the caller because the module itself has no device arg.
+        smplxlite_coco17_model = SmplxLiteCoco17(model_path=model_path).to(device)
     return smplxlite_coco17_model
 
 

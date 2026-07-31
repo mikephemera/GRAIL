@@ -305,7 +305,10 @@ def step3_obj_pose_estimation(video_ids, args):
 
 def step4_optimize_4dhoi(video_ids, args):
     """Step 4: 4D HOI optimization."""
-    from grail.optimization.hoi_optimizer import HOIOptimizer
+    from grail.optimization.hoi_optimizer import (
+        ContactLabelsCacheMissingError,
+        HOIOptimizer,
+    )
 
     for video_id in tqdm(sorted(video_ids), desc="Step 4 — Optimize"):
         try:
@@ -332,6 +335,10 @@ def step4_optimize_4dhoi(video_ids, args):
                 opt_cfg["human_model"] = args.cfg["human_model"]
             else:
                 opt_cfg = dict(args.cfg)
+            # Contact labels are hardware-independent artifacts.  On MUSA, do
+            # not fall through to the OpenAI VLM when the selected cache root
+            # has no label file; the sample is skipped instead.
+            opt_cfg["contact_labels_cache_only"] = str(args.device).lower().startswith("musa")
 
             optimizer = HOIOptimizer(
                 exp_name=video_id,
@@ -347,6 +354,8 @@ def step4_optimize_4dhoi(video_ids, args):
             hoi_data = optimizer.optimize(data=data)
             save_hoi_data(hoi_data, f"{output_dir}/hoi_data.pkl")
 
+        except ContactLabelsCacheMissingError as e:
+            print(f"  Skipped (step4) {video_id}: {e}")
         except Exception as e:
             print(f"  Error (step4) {video_id}: {e}\n{traceback.format_exc()}")
 

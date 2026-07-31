@@ -11,6 +11,7 @@ from pytorch3d.transforms import (
     matrix_to_axis_angle,
     rotation_6d_to_matrix,
 )
+from tqdm import tqdm
 
 from grail.constants.image import FOCAL_LENGTH, HEIGHT, WIDTH
 from grail.core.contact_label import detect_contact_joints_interval
@@ -47,6 +48,10 @@ from grail.rendering.camera import (
 )
 
 
+class ContactLabelsCacheMissingError(RuntimeError):
+    """Raised when an offline run has no per-video contact-label cache."""
+
+
 class HOIOptimizer:
     """
     Human-Object Interaction Optimizer
@@ -72,6 +77,12 @@ class HOIOptimizer:
         self.logger = create_logger(self.log_dir)
         self.cache_list = self.cfg.get("cache_list", [])
         self.cache_dir = cache_dir
+        # MUSA workers are commonly isolated from the network.  Make that
+        # boundary explicit while keeping the historical online behaviour for
+        # CPU/CUDA callers.  A caller may also opt in explicitly via config.
+        self.contact_labels_cache_only = bool(
+            self.cfg.get("contact_labels_cache_only", str(device).lower().startswith("musa"))
+        )
 
         # TODO: double check this logic when changing the exp_name format
         dataset, category, video_id = exp_name.split("/")
@@ -390,7 +401,9 @@ class HOIOptimizer:
             interval = []
             start_idx = inter_start_idx
             self.logger.info("Skipping contact label detection (is_static_obj=True)")
-        elif "contact_labels" in self.cache_list and os.path.exists(cache_file):
+        elif ("contact_labels" in self.cache_list or self.contact_labels_cache_only) and os.path.exists(
+            cache_file
+        ):
             self.logger.info(f"Loading contact labels from cache: {cache_file}")
             with open(cache_file, "r") as f:
                 cache_data = json.load(f)
@@ -403,6 +416,11 @@ class HOIOptimizer:
             )
             start_idx = cache_data.get(
                 "contact_start_idx", cache_data.get("contact_interval_start_idx", inter_start_idx)
+            )
+        elif self.contact_labels_cache_only:
+            raise ContactLabelsCacheMissingError(
+                "Contact-label cache not found in cache-only mode; skipping optimization: "
+                f"{cache_file}"
             )
         elif self.cfg.get("contact_labels", None) is not None:
             per_interval = self.cfg["contact_labels"]
@@ -671,15 +689,23 @@ class HOIOptimizer:
 
         opt_niter = opt_config["niter"]
         loss_cfg = opt_config["loss_cfg"]
+        log_interval = opt_config.get("log_interval", max(1, opt_niter // 20))
 
-        for cur_iter in range(opt_niter):
+        pbar = tqdm(
+            range(opt_niter),
+            desc=f"{self.exp_name} - {opt_config['stage']}",
+            dynamic_ncols=True,
+        )
+        for cur_iter in pbar:
             optimizer.zero_grad()
             pred = self.forward(data, self.params)
             loss, loss_dict = self.loss_computer.compute_loss(data, pred, loss_cfg)
             loss.backward()
             optimizer.step()
 
-            self.write_logs(cur_iter, loss_dict, opt_config)
+            pbar.set_postfix_str(f"loss={loss.item():.3f}")
+            if cur_iter % log_interval == 0 or cur_iter == opt_niter - 1:
+                self.write_logs(cur_iter, loss_dict, opt_config)
 
         self.logger.info(
             f"Human pelvis after optimization stage: {pred.human.body_joints_seq[0, 0, :]}"

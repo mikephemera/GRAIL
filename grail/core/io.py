@@ -499,6 +499,10 @@ def save_hoi_data(hoi_data, save_path):
 
 
 def load_hoi_data(load_path, output_eval_data=False):
+    # Pickles written by NumPy 2.x refer to ``numpy._core`` while NumPy 1.x
+    # exposes the same modules as ``numpy.core``.  Install compatibility
+    # aliases before unpickling so Step 5 can consume cross-environment data.
+    _install_numpy_pickle_aliases()
     with open(load_path, "rb") as f:
         hoi_data = pickle.load(f)
     return hoi_data
@@ -831,7 +835,7 @@ def save_mesh(verts, faces, save_path):
 
 def run_subprocess(cmd, description, shell=False, env=None, cwd=None):
     """
-    Run a subprocess with proper error handling and logging
+    Run a subprocess with proper error handling and live output forwarding.
 
     Args:
         cmd (list or str): Command to run
@@ -844,36 +848,56 @@ def run_subprocess(cmd, description, shell=False, env=None, cwd=None):
         bool: True if successful, False otherwise
     """
     cmd_str = " ".join(cmd) if isinstance(cmd, list) else cmd
-    print(f"\n🔄 {description}")
-    print(f"Command: {cmd_str}")
+    print(f"\n🔄 {description}", flush=True)
+    print(f"Command: {cmd_str}", flush=True)
 
     start_time = time.time()
+    proc_env = os.environ.copy()
+    if env:
+        proc_env.update(env)
+    proc_env.setdefault("PYTHONUNBUFFERED", "1")
 
     try:
-        result = subprocess.run(
-            cmd, shell=shell, check=True, capture_output=True, text=True, env=env, cwd=cwd
+        process = subprocess.Popen(
+            cmd,
+            shell=shell,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            env=proc_env,
+            cwd=cwd,
+            bufsize=0,
         )
 
+        assert process.stdout is not None
+        captured = bytearray()
+        output_stream = getattr(sys.stdout, "buffer", None)
+
+        while True:
+            chunk = process.stdout.read(4096)
+            if not chunk:
+                break
+            captured.extend(chunk)
+            if output_stream is not None:
+                output_stream.write(chunk)
+                output_stream.flush()
+            else:
+                sys.stdout.write(chunk.decode(errors="replace"))
+                sys.stdout.flush()
+
+        returncode = process.wait()
         duration = time.time() - start_time
-        print(f"✅ Completed in {duration:.2f}s")
+        if returncode == 0:
+            print(f"✅ Completed in {duration:.2f}s", flush=True)
+            return True
 
-        if result.stdout:
-            print(result.stdout.strip())
-
-        return True
-
-    except subprocess.CalledProcessError as e:
-        duration = time.time() - start_time
-        print(f"❌ Failed in {duration:.2f}s (code {e.returncode})")
-
-        if e.stdout:
-            print(f"STDOUT: {e.stdout.strip()}")
-        if e.stderr:
-            print(f"STDERR: {e.stderr.strip()}")
-
+        print(f"❌ Failed in {duration:.2f}s (code {returncode})", flush=True)
+        if captured:
+            tail = bytes(captured[-65536:]).decode(errors="replace").strip()
+            if tail:
+                print(tail, flush=True)
         return False
 
     except Exception as e:
         duration = time.time() - start_time
-        print(f"❌ Exception in {duration:.2f}s: {str(e)}")
+        print(f"❌ Exception in {duration:.2f}s: {str(e)}", flush=True)
         return False
